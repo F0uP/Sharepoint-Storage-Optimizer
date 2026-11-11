@@ -1,0 +1,4 @@
+# consistent line endings between Windows and the Linux CI runners
+* text=auto eol=lf
+*.png binary
+*.ico binary
