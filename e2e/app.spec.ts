@@ -1,5 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 
+// the first-run introduction has its own spec (onboarding.spec.ts)
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("spo:onboarding", JSON.stringify({ welcome: true, workspace: true })));
+});
+
 async function openDemo(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Demo ansehen" }).click();
@@ -7,20 +12,13 @@ async function openDemo(page: Page) {
   await expect(page.getByRole("heading", { name: "Übersicht" })).toBeVisible({ timeout: 30_000 });
 }
 
-/** Fakes the AI backend so the flow runs without an API key. */
-async function mockAi(page: Page) {
+/** Fakes the AI provider calls; records which API key the app sent along. */
+async function mockAi(page: Page, sentKeys: string[] = []) {
+  await page.route("**/api/ai/verify", (route) =>
+    route.fulfill({ json: { ok: true, id: "openai", label: "OpenAI", model: route.request().postDataJSON().model ?? "gpt-test" } }),
+  );
   await page.route("**/api/ai/analyze", async (route) => {
-    if (route.request().method() === "GET") {
-      return route.fulfill({
-        json: {
-          configured: true,
-          providers: [
-            { id: "openai", label: "OpenAI", model: "gpt-test" },
-            { id: "gemini", label: "Google Gemini", model: "gemini-test" },
-          ],
-        },
-      });
-    }
+    sentKeys.push(route.request().headers()["x-ai-api-key"] ?? "");
     const body = route.request().postDataJSON();
     const actions = ["delete", "archive", "compress", "review"];
     return route.fulfill({
@@ -41,12 +39,23 @@ async function mockAi(page: Page) {
   });
 }
 
-test("login screen offers sign-in and demo", async ({ page }) => {
+test("Microsoft 365 connection is configured in the app, without an env file", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /Mehr Platz in SharePoint/ })).toBeVisible();
-  // no Azure app configured in CI → sign-in disabled, hint visible
-  await expect(page.getByRole("button", { name: "Mit Microsoft anmelden" })).toBeDisabled();
-  await expect(page.getByText("AZURE_CLIENT_ID")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Mehr Platz in SharePoint/ })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Microsoft 365 verbinden" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Einstellungen" });
+  await expect(dialog.getByLabel("Umleitungs-URI", { exact: true })).toHaveValue(/\/auth\/redirect$/);
+  await dialog.getByLabel("Anwendungs-ID (Client-ID)").fill("not-a-guid");
+  await dialog.getByRole("button", { name: "Speichern" }).click();
+  await expect(dialog.getByText(/Client-ID ist eine GUID/)).toBeVisible();
+
+  await dialog.getByLabel("Anwendungs-ID (Client-ID)").fill("3f2b8c1e-5d4a-4c7b-9e21-8a6f0d3c9a4d");
+  await dialog.getByRole("button", { name: "Speichern" }).click();
+
+  // the page reloads with the new app registration
+  await expect(page.getByRole("button", { name: "Mit Microsoft anmelden" })).toBeEnabled({ timeout: 20_000 });
+  await expect(page.getByRole("button", { name: "Microsoft 365 verbinden" })).toHaveCount(0);
 });
 
 test("overview shows storage, potential and charts", async ({ page }) => {
@@ -91,10 +100,22 @@ test("version scan finds old versions", async ({ page }) => {
   await expect(page.getByRole("button", { name: /Alte Versionen/ })).toBeVisible();
 });
 
-test("AI analysis with provider choice feeds files, optimizations and dismissals", async ({ page }) => {
-  await mockAi(page);
+test("AI keys are entered in the app and drive the analysis", async ({ page }) => {
+  const sentKeys: string[] = [];
+  await mockAi(page, sentKeys);
   await openDemo(page);
   await page.getByRole("button", { name: "KI-Analyse" }).first().click();
+
+  // no provider yet → straight into the settings
+  await page.getByRole("button", { name: "API-Schlüssel hinterlegen" }).click();
+  const dialog = page.getByRole("dialog", { name: "Einstellungen" });
+  await expect(dialog.getByRole("tab", { name: "KI-Anbieter" })).toHaveAttribute("aria-selected", "true");
+  await dialog.getByLabel("API-Schlüssel").first().fill("sk-test-openai");
+  await dialog.getByRole("button", { name: "Prüfen" }).first().click();
+  await expect(dialog.getByText(/Verbindung erfolgreich/)).toBeVisible();
+  await dialog.getByLabel("API-Schlüssel").nth(1).fill("AIza-test-gemini");
+  await dialog.getByRole("button", { name: "Speichern" }).click();
+  await expect(dialog).toBeHidden();
 
   await page.getByRole("combobox", { name: "KI-Anbieter" }).first().click();
   await page.getByRole("option", { name: /Google Gemini/ }).click();
@@ -102,6 +123,7 @@ test("AI analysis with provider choice feeds files, optimizations and dismissals
 
   await expect(page.getByText("Der meiste Speicher liegt in Rohvideos")).toBeVisible();
   await expect(page.getByText(/Google Gemini · gemini-test · \d+ Dateien bewertet/)).toBeVisible();
+  expect(sentKeys).toEqual(["AIza-test-gemini"]);
   await expect(page.getByRole("tab", { name: /Löschen/ })).toHaveAttribute("aria-selected", "true");
 
   // quick select + ignore
@@ -132,4 +154,74 @@ test("command palette navigates and finds files", async ({ page }) => {
   await page.getByRole("dialog").getByRole("option").first().click();
   await expect(page.getByRole("heading", { name: "Dateien" })).toBeVisible();
   await expect(page.getByPlaceholder("Name oder Pfad suchen …")).toHaveValue(/Imagefilm/);
+});
+
+test("site overview ranks all sites by storage", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Demo ansehen" }).click();
+  await expect(page.getByText(/8 Sites belegen zusammen/)).toBeVisible({ timeout: 30_000 });
+  const first = page.locator("main button").filter({ hasText: "%" }).first();
+  await expect(first).toContainText("Marketing & Kommunikation");
+  await page.getByRole("radio", { name: "A–Z" }).click();
+  await expect(page.locator("main button").filter({ hasText: "%" }).first()).toContainText("Geschäftsführung");
+});
+
+test("cleanup rule applies in one click and can be undone from the history", async ({ page }) => {
+  await openDemo(page);
+  await page.getByRole("button", { name: "Regeln", exact: true }).first().click();
+  await expect(page.getByRole("heading", { name: "Temp- und Systemdateien" })).toBeVisible();
+
+  await page.getByRole("button", { name: /^Anwenden/ }).click();
+  const dialog = page.getByRole("alertdialog");
+  await dialog.getByRole("button", { name: "In Papierkorb verschieben" }).click();
+  await expect(page.getByText(/Dateien gelöscht/)).toBeVisible();
+  await page.getByRole("button", { name: "Rückgängig" }).click();
+  await expect(page.getByText(/Dateien wiederhergestellt/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Verlauf", exact: true }).first().click();
+  await expect(page.getByText("Gelöscht", { exact: true })).toBeVisible();
+  await expect(page.getByText("Wiederhergestellt", { exact: true })).toBeVisible();
+});
+
+test("own cleanup rules are saved and listed", async ({ page }) => {
+  await openDemo(page);
+  await page.getByRole("button", { name: "Regeln", exact: true }).first().click();
+  await page.getByRole("button", { name: "Neue Regel" }).click();
+  const dialog = page.getByRole("dialog", { name: "Neue Regel" });
+  await dialog.getByLabel("Name", { exact: true }).fill("Alte ZIP-Archive");
+  await dialog.getByLabel("Dateiendungen").fill("zip, rar");
+  await expect(dialog.getByText(/Trifft aktuell auf [1-9][\d.]* Dateien/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Regel speichern" }).click();
+  await expect(page.getByText("Eigene Regeln")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Alte ZIP-Archive" })).toBeVisible();
+});
+
+test("overview shows the storage trend and exports a PDF report", async ({ page }) => {
+  await openDemo(page);
+  await expect(page.getByText("Speicherverlauf")).toBeVisible();
+  await expect(page.getByText(/seit \d{2}\.\d{2}\.\d{4}/)).toBeVisible();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Bericht" }).click();
+  expect((await download).suggestedFilename()).toMatch(/^Speicherbericht-marketing-kommunikation-\d{4}-\d{2}-\d{2}\.pdf$/);
+});
+
+test("owners are notified and version limits are set", async ({ page }) => {
+  await openDemo(page);
+  await page.getByRole("button", { name: "Dateien", exact: true }).first().click();
+  const boxes = page.getByRole("checkbox", { name: "Zeile auswählen" });
+  await boxes.nth(0).click();
+  await boxes.nth(1).click();
+  await page.getByRole("button", { name: "Weitere" }).click();
+  await page.getByRole("menuitem", { name: "Besitzer benachrichtigen" }).click();
+  const dialog = page.getByRole("dialog", { name: "Besitzer benachrichtigen" });
+  await expect(dialog.getByText(/@contoso\.com/).first()).toBeVisible();
+  await dialog.getByRole("button", { name: /Mails? senden/ }).click();
+  await expect(page.getByText(/Mails? verschickt/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Optimierungen" }).first().click();
+  await page.getByRole("button", { name: /Versionsverlauf/ }).click();
+  await page.getByRole("button", { name: "Einstellungen laden" }).click();
+  await page.getByRole("button", { name: "Für alle Bibliotheken übernehmen" }).click();
+  await expect(page.getByText(/Versionslimit für .* gesetzt/).first()).toBeVisible();
+  await expect(page.getByText("Aktuell: 100 Versionen").first()).toBeVisible();
 });

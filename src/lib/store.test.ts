@@ -74,6 +74,31 @@ describe("AI recommendations", () => {
     expect(state().ai!.recommendations.map((r) => r.fileId)).toEqual([fileA.id]);
   });
 
+  it("puts restored files back and takes them out of the recycle bin", () => {
+    state().removeFiles([fileA.id], false);
+    expect(state().scan!.quota!.deleted).toBe(2 * GB + 120 * MB);
+    state().addFiles([fileA, fileA]);
+    expect(state().scan!.files.map((f) => f.id)).toEqual([fileB.id, fileA.id]);
+    expect(state().scan!.quota!.deleted).toBe(2 * GB);
+    expect(state().cleanup).toMatchObject({ recycledBytes: 0, files: 0 });
+  });
+
+  it("applies compressed sizes and the freed space", () => {
+    state().updateFiles(new Map([[fileB.id, 10 * MB]]), 70 * MB);
+    const b = state().scan!.files.find((f) => f.id === fileB.id)!;
+    expect(b).toMatchObject({ size: 10 * MB, versionBytes: 0, versionCount: 1 });
+    expect(state().scan!.quota!.used).toBe(50 * GB - 70 * MB);
+    expect(state().cleanup.freedBytes).toBe(70 * MB);
+  });
+
+  it("records history and restored ids", async () => {
+    const { createEntry } = await import("./history");
+    const entry = createEntry("delete", [fileA], 100 * MB, { permanent: false });
+    state().pushHistory(entry);
+    state().markRestored(entry.id, [fileA.id]);
+    expect(state().history[0]).toMatchObject({ id: entry.id, restoredIds: [fileA.id] });
+  });
+
   it("resets everything per site", () => {
     state().selectSite({ id: "other", name: "Andere", webUrl: "https://x.sharepoint.com/sites/o" });
     expect(state()).toMatchObject({ scan: null, ai: null, view: "overview" });

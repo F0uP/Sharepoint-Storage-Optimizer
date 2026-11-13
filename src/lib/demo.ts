@@ -1,5 +1,17 @@
 import { categorize, getExtension, OFFICE_EXT } from "./file-types";
-import type { BulkResult, DriveSummary, Quota, ScanProgress, ScanResult, SiteRef, SpFile } from "./types";
+import { formatBytes } from "./format";
+import type { Snapshot } from "./trend";
+import type {
+  BulkResult,
+  DriveSummary,
+  LibraryVersionSetting,
+  OwnerMail,
+  Quota,
+  ScanProgress,
+  ScanResult,
+  SiteRef,
+  SpFile,
+} from "./types";
 
 /** Deterministic PRNG so the demo looks the same on every load. */
 function mulberry32(seed: number) {
@@ -22,9 +34,27 @@ export const DEMO_SITES: SiteRef[] = [
   { id: "demo-marketing", name: "Marketing & Kommunikation", webUrl: "https://contoso.sharepoint.com/sites/marketing", description: "Kampagnen, Fotos, Videos und Pressematerial" },
   { id: "demo-projekte", name: "Projekte", webUrl: "https://contoso.sharepoint.com/sites/projekte", description: "Projektdokumentation und Lieferobjekte" },
   { id: "demo-hr", name: "Personal", webUrl: "https://contoso.sharepoint.com/sites/personal", description: "Richtlinien, Schulungen, Vorlagen" },
+  { id: "demo-it", name: "IT & Infrastruktur", webUrl: "https://contoso.sharepoint.com/sites/it", description: "Handbücher, Images, Installationsquellen" },
+  { id: "demo-vertrieb", name: "Vertrieb", webUrl: "https://contoso.sharepoint.com/sites/vertrieb", description: "Angebote, Präsentationen, Kundenunterlagen" },
+  { id: "demo-service", name: "Kundenservice", webUrl: "https://contoso.sharepoint.com/sites/service", description: "Schulungsvideos, FAQ, Vorlagen" },
+  { id: "demo-qm", name: "Qualitätsmanagement", webUrl: "https://contoso.sharepoint.com/sites/qm", description: "Audits, Zertifikate, Prozessdokumentation" },
+  { id: "demo-gf", name: "Geschäftsführung", webUrl: "https://contoso.sharepoint.com/sites/gf", description: "Berichte und Beschlüsse" },
 ];
 
+/** Number of generated files per demo site (drives the site's size). */
+const FILE_COUNT: Record<string, number> = {
+  "demo-marketing": 3200,
+  "demo-projekte": 1800,
+  "demo-hr": 900,
+  "demo-it": 2400,
+  "demo-vertrieb": 1400,
+  "demo-service": 1100,
+  "demo-qm": 700,
+  "demo-gf": 450,
+};
+
 const PEOPLE = ["Anna Weber", "Jonas Keller", "Lea Hoffmann", "Max Braun", "Sophie Wagner", "Felix Schulz", "Mara Fischer"];
+const emailOf = (name: string) => `${name.toLowerCase().replace(/\s+/g, ".")}@contoso.com`;
 
 interface Template {
   folder: string;
@@ -38,6 +68,7 @@ interface Template {
 
 const TEMPLATES: Template[] = [
   { folder: "Videos/Kampagnen", names: ["Imagefilm", "Produktvideo", "Teaser", "Interview", "Messe-Rundgang", "Webinar-Aufzeichnung", "Kundenstimme"], ext: ["mp4", "mov", "mp4", "mkv"], median: 420 * MB, spread: 1.1, weight: 4 },
+  { folder: "Recordings", names: ["Weekly Sync", "Jour fixe", "Kundentermin", "All Hands", "Sprint Review", "Projekt-Kickoff"], ext: ["mp4"], median: 260 * MB, spread: 0.7, weight: 3 },
   { folder: "Videos/Rohmaterial", names: ["DJI_", "C0", "GX0", "MVI_", "Clip_"], ext: ["mov", "mp4", "mts"], median: 1.6 * GB, spread: 0.8, weight: 2 },
   { folder: "Fotos/Events", names: ["IMG_", "DSC0", "Event_", "Sommerfest_", "Messe_"], ext: ["jpg", "jpg", "jpeg", "heic", "png"], median: 6 * MB, spread: 0.8, weight: 14 },
   { folder: "Fotos/Shootings", names: ["Shooting_", "Portrait_", "Produkt_", "_MG_"], ext: ["cr3", "nef", "arw", "dng", "jpg", "tif"], median: 38 * MB, spread: 0.6, weight: 7 },
@@ -71,13 +102,14 @@ export function generateDemoScan(site: SiteRef): ScanResult {
   const totalWeight = TEMPLATES.reduce((s, t) => s + t.weight, 0);
   const files: SpFile[] = [];
   const now = Date.now();
-  const count = site.id === "demo-marketing" ? 3200 : 1800;
+  const count = FILE_COUNT[site.id] ?? 1800;
   let n = 0;
 
   const make = (driveName: string, folder: string, name: string, size: number, modified: number, hash?: string): SpFile => {
     const id = `${site.id}-${n++}`;
     const ext = getExtension(name);
     const modifiedIso = new Date(modified).toISOString();
+    const person = pick(rnd, PEOPLE);
     return {
       id,
       driveId: `${site.id}-${driveName}`,
@@ -89,7 +121,8 @@ export function generateDemoScan(site: SiteRef): ScanResult {
       category: categorize(name),
       created: new Date(modified - rnd() * 90 * 864e5).toISOString(),
       modified: modifiedIso,
-      modifiedBy: pick(rnd, PEOPLE),
+      modifiedBy: person,
+      modifiedByEmail: emailOf(person),
       webUrl: `${site.webUrl}/${encodeURIComponent(driveName)}/${folder.split("/").map(encodeURIComponent).join("/")}/${encodeURIComponent(name)}`,
       hash: hash ?? `h${seed}-${n}`,
     };
@@ -98,12 +131,15 @@ export function generateDemoScan(site: SiteRef): ScanResult {
   for (let i = 0; i < count; i++) {
     let r = rnd() * totalWeight;
     const t = TEMPLATES.find((tpl) => (r -= tpl.weight) < 0) ?? TEMPLATES[0];
-    const driveName = t.folder.startsWith("Videos") || t.folder.startsWith("Fotos") || t.folder === "Design" ? "Marketing-Assets" : t.folder === "Archiv" || t.folder === "Software" ? "Projektarchiv" : pick(rnd, libraries);
+    const driveName = t.folder === "Recordings" ? "Dokumente" : t.folder.startsWith("Videos") || t.folder.startsWith("Fotos") || t.folder === "Design" ? "Marketing-Assets" : t.folder === "Archiv" || t.folder === "Software" ? "Projektarchiv" : pick(rnd, libraries);
     const year = pick(rnd, SUBFOLDERS);
     const folder = `${t.folder}/${year}`;
     const base = pick(rnd, t.names);
     const ext = pick(rnd, t.ext);
-    const name = /_$|0$/.test(base) ? `${base}${String(Math.floor(rnd() * 9000) + 1000)}.${ext}` : `${base} ${year}${rnd() > 0.6 ? ` v${Math.ceil(rnd() * 4)}` : ""}${rnd() > 0.85 ? " final" : ""}.${ext}`;
+    const stamp = () => `${year}${String(1 + Math.floor(rnd() * 12)).padStart(2, "0")}${String(1 + Math.floor(rnd() * 28)).padStart(2, "0")}_${String(8 + Math.floor(rnd() * 9)).padStart(2, "0")}0${Math.floor(rnd() * 6)}12`;
+    const name = t.folder === "Recordings"
+      ? `${base}-${stamp()}-Besprechungsaufzeichnung.mp4`
+      : /_$|0$/.test(base) ? `${base}${String(Math.floor(rnd() * 9000) + 1000)}.${ext}` : `${base} ${year}${rnd() > 0.6 ? ` v${Math.ceil(rnd() * 4)}` : ""}${rnd() > 0.85 ? " final" : ""}.${ext}`;
     const yearStart = Date.UTC(Number(year), 0, 1);
     const modified = Math.min(now - 864e5, yearStart + rnd() * 365 * 864e5);
     files.push(make(driveName, folder, name, logNormal(rnd, t.median, t.spread), modified));
@@ -161,6 +197,88 @@ export function generateDemoScan(site: SiteRef): ScanResult {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const quotaCache = new Map<string, Quota>();
+
+/** Quota of a demo site – derived from the same generator as the scan, so both always agree. */
+export function demoQuota(site: SiteRef): Quota {
+  let quota = quotaCache.get(site.id);
+  if (!quota) {
+    quota = generateDemoScan(site).quota!;
+    quotaCache.set(site.id, quota);
+  }
+  return quota;
+}
+
+export async function demoSiteQuotas(sites: SiteRef[], onProgress?: (d: number, t: number) => void) {
+  const out = new Map<string, Quota | undefined>();
+  for (const [i, site] of sites.entries()) {
+    await sleep(60);
+    out.set(site.id, demoQuota(site));
+    onProgress?.(i + 1, sites.length);
+  }
+  return out;
+}
+
+/** Six months of weekly readings that end at the current quota – shows the trend chart in the demo. */
+export function demoTrend(site: SiteRef, quota: Quota, now = Date.now()): Snapshot[] {
+  const rnd = mulberry32([...site.id].reduce((s, c) => s * 33 + c.charCodeAt(0), 11));
+  const weeks = 26;
+  const start = quota.used * 0.78;
+  return Array.from({ length: weeks + 1 }, (_, i) => {
+    const progress = i / weeks;
+    const noise = i === weeks ? 0 : (rnd() - 0.5) * quota.used * 0.015;
+    return {
+      at: new Date(now - (weeks - i) * 7 * 864e5).toISOString(),
+      used: Math.round(i === weeks ? quota.used : start + (quota.used - start) * progress + noise),
+      total: quota.total,
+      deleted: Math.round(quota.deleted * (0.4 + 0.6 * progress)),
+    };
+  });
+}
+
+const versionSettings = new Map<string, LibraryVersionSetting[]>();
+
+export async function demoVersionSettings(site: SiteRef, drives: DriveSummary[]): Promise<LibraryVersionSetting[]> {
+  await sleep(300);
+  let list = versionSettings.get(site.id);
+  if (!list) {
+    list = drives.map((d, i) => ({ driveId: d.id, driveName: d.name, listId: `00000000-0000-0000-0000-00000000000${i}`, enabled: true, majorLimit: 500 }));
+    versionSettings.set(site.id, list);
+  }
+  return list.map((s) => ({ ...s }));
+}
+
+export async function demoSetVersionLimit(site: SiteRef, setting: LibraryVersionSetting, limit: number) {
+  await sleep(250);
+  const list = versionSettings.get(site.id) ?? [];
+  versionSettings.set(
+    site.id,
+    list.map((s) => (s.driveId === setting.driveId ? { ...s, enabled: true, majorLimit: limit } : s)),
+  );
+}
+
+export async function demoRestoreFiles(_site: SiteRef, files: SpFile[], _since: string, onProgress?: (d: number, t: number) => void): Promise<BulkResult> {
+  return demoDeleteFiles(files, false, onProgress);
+}
+
+/** Placeholder content instead of real files – the desktop app writes these during a demo backup. */
+export async function demoDownloadUrls(files: SpFile[]): Promise<Map<string, string>> {
+  return new Map(
+    files.map((f) => [
+      f.id,
+      `data:text/plain;charset=utf-8,${encodeURIComponent(`Demo-Platzhalter für „${f.name}“ (${formatBytes(f.size)}) – im echten Betrieb liegt hier die Originaldatei.`)}`,
+    ]),
+  );
+}
+
+export async function demoSendMails(mails: OwnerMail[], onProgress?: (d: number, t: number) => void): Promise<BulkResult> {
+  for (let i = 0; i < mails.length; i++) {
+    await sleep(200);
+    onProgress?.(i + 1, mails.length);
+  }
+  return { succeeded: mails.map((m) => m.to.email), failed: [] };
+}
 
 export async function demoSearchSites(query: string): Promise<SiteRef[]> {
   await sleep(250);

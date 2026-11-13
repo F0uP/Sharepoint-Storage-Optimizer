@@ -64,7 +64,7 @@ export function ageStats(files: SpFile[]): AgeStat[] {
 
 /* ------------------------------------------------------------------ insights */
 
-export type InsightId = "duplicates" | "videos" | "images" | "stale" | "archives" | "junk" | "versions" | "ai";
+export type InsightId = "duplicates" | "videos" | "recordings" | "images" | "stale" | "archives" | "junk" | "versions" | "ai";
 
 export interface InsightRow {
   file: SpFile;
@@ -83,6 +83,14 @@ export interface Insight {
 }
 
 const JUNK_PATTERNS = [/^~\$/, /\.tmp$/i, /^thumbs\.db$/i, /^\.ds_store$/i, /^desktop\.ini$/i, /\.bak$/i, /\.old$/i, /\.crdownload$/i, /\.part$/i, /^~.*\.tmp$/i];
+
+const RECORDING_NAME = /(meeting recording|besprechungsaufzeichnung|besprechungsaufnahme|aufzeichnung der besprechung)/i;
+const RECORDING_FOLDER = /(^|\/)(recordings|aufzeichnungen)(\/|$)/i;
+
+/** Teams stores meeting recordings as MP4 in "Recordings" folders, named "…-Meeting Recording.mp4". */
+export function isTeamsRecording(f: SpFile): boolean {
+  return f.category === "video" && (RECORDING_NAME.test(f.name) || RECORDING_FOLDER.test(f.path));
+}
 
 function bySize(rows: InsightRow[]) {
   return rows.sort((a, b) => b.bytes - a.bytes);
@@ -110,8 +118,13 @@ export function computeInsights(files: SpFile[], now = Date.now()): Insight[] {
     for (const c of copies) duplicateRows.push({ file: c, bytes: c.size, note: `Original: ${original.path}/${original.name}` });
   }
 
+  const recordings = files.filter(isTeamsRecording).map((f) => {
+    const days = Math.floor((now - Date.parse(f.created)) / 864e5);
+    return { file: f, bytes: f.size, note: days >= 1 ? `Aufgezeichnet vor ${formatNumber(days)} Tagen` : undefined };
+  });
+
   const videos = files
-    .filter((f) => f.category === "video" && f.size >= 100 * MB)
+    .filter((f) => f.category === "video" && f.size >= 100 * MB && !isTeamsRecording(f))
     .map((f) => ({ file: f, bytes: f.size, note: f.size >= 1024 * MB ? "Komprimieren spart oft 60–80 %" : undefined }));
 
   const images = files
@@ -137,6 +150,7 @@ export function computeInsights(files: SpFile[], now = Date.now()): Insight[] {
   return [
     insight("duplicates", "Doppelte Dateien", "Identischer Inhalt an mehreren Orten. Das jeweils älteste Exemplar bleibt erhalten.", duplicateRows),
     insight("versions", "Versionsverlauf", "Alte Versionen belegen Speicher, ohne sichtbar zu sein. Die aktuelle Version bleibt erhalten.", versions, "versions"),
+    insight("recordings", "Teams-Aufnahmen", "Besprechungsaufzeichnungen aus Teams – meist nur wenige Wochen relevant.", recordings),
     insight("videos", "Große Videos", "Videos ab 100 MB – komprimieren, archivieren oder löschen.", videos),
     insight("stale", "Lange nicht genutzt", "Dateien ab 10 MB, die seit mehr als 2 Jahren nicht geändert wurden.", stale),
     insight("archives", "Archive & Installer", "ZIP-, ISO- und Setup-Dateien ab 10 MB – meist Einmal-Downloads oder Backups.", archives),

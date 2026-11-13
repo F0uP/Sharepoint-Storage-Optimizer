@@ -7,6 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { FileTable } from "../file-table";
 import { PageHeader } from "../page-header";
 import { RecycleBinButton } from "../recycle-bin-button";
+import { VersionLimitsCard } from "../version-limits-card";
 import { INSIGHT_ICONS } from "../insight-icons";
 import { useInsights } from "@/hooks/use-insights";
 import { scanVersionsAction } from "@/lib/actions";
@@ -200,6 +201,7 @@ export function OptimizeView() {
               emptyDescription="In dieser Kategorie gibt es aktuell keine Einsparmöglichkeiten."
             />
           )}
+          {active.id === "versions" && <VersionLimitsCard />}
         </section>
       </div>
     </div>

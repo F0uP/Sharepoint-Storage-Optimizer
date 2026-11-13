@@ -15,6 +15,8 @@ export interface SpFile {
   created: string;
   modified: string;
   modifiedBy?: string;
+  /** e-mail of the last editor – used to ask owners to review their files */
+  modifiedByEmail?: string;
   webUrl: string;
   /** content hash (quickXorHash / sha1) – used for duplicate detection */
   hash?: string;
@@ -82,6 +84,8 @@ export interface AiProviderInfo {
   id: "openai" | "gemini";
   label: string;
   model: string;
+  /** `local` = key entered in this app's settings, `server` = key preset on the server. */
+  source?: "local" | "server";
 }
 
 export interface AiResult {
@@ -92,4 +96,21 @@ export interface AiResult {
   summary: string;
   tips: { title: string; detail: string }[];
   recommendations: AiRecommendation[];
+}
+
+/** Version settings of a document library (SharePoint list). */
+export interface LibraryVersionSetting {
+  driveId: string;
+  driveName: string;
+  listId: string;
+  enabled: boolean;
+  /** null = no limit configured (SharePoint default is 500) */
+  majorLimit: number | null;
+}
+
+/** One message per file owner (see lib/notify.ts). */
+export interface OwnerMail {
+  to: { name: string; email: string };
+  subject: string;
+  html: string;
 }

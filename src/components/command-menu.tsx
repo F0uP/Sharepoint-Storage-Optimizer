@@ -5,10 +5,16 @@ import { create } from "zustand";
 import { useTheme } from "next-themes";
 import {
   ArrowLeftRightIcon,
+  CompassIcon,
+  FileDownIcon,
   FolderOpenIcon,
   HistoryIcon,
+  ListFilterIcon,
+  ListRestartIcon,
   LayoutGridIcon,
+  KeyRoundIcon,
   RefreshCwIcon,
+  Settings2Icon,
   SparklesIcon,
   SunMoonIcon,
   ZapIcon,
@@ -24,6 +30,9 @@ import {
   CommandList,
   CommandShortcut,
 } from "@/components/ui/command";
+import { openSettings } from "./settings-dialog";
+import { useReport } from "./report-button";
+import { requestTour } from "@/lib/onboarding";
 import { openSite } from "@/lib/actions";
 import { CATEGORY_META } from "@/lib/file-types";
 import { formatBytes } from "@/lib/format";
@@ -51,6 +60,7 @@ export function CommandMenu() {
   const scan = useApp((s) => s.scan);
   const setView = useApp((s) => s.setView);
   const { resolvedTheme, setTheme } = useTheme();
+  const report = useReport();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -73,12 +83,18 @@ export function CommandMenu() {
     { id: "files", label: "Dateien", icon: FolderOpenIcon, run: () => setView("files") },
     { id: "optimize", label: "Optimierungen", icon: ZapIcon, run: () => setView("optimize") },
     { id: "ai", label: "KI-Analyse", icon: SparklesIcon, run: () => setView("ai") },
+    { id: "rules", label: "Regeln (Aufräum-Profile)", icon: ListFilterIcon, run: () => setView("rules") },
+    { id: "history", label: "Verlauf & Rückgängig", icon: ListRestartIcon, run: () => setView("history") },
   ];
   const actions: Entry[] = [
     { id: "rescan", label: "Neu scannen", icon: RefreshCwIcon, run: () => scan && openSite(scan.site, true) },
     { id: "versions", label: "Versionsverlauf analysieren", icon: HistoryIcon, run: () => setView("optimize", { insight: "versions" }) },
+    { id: "report", label: "Bericht als PDF erstellen", icon: FileDownIcon, run: () => void report.generate() },
     { id: "theme", label: "Farbschema wechseln", icon: SunMoonIcon, run: () => setTheme(resolvedTheme === "dark" ? "light" : "dark") },
     { id: "site", label: "Site wechseln", icon: ArrowLeftRightIcon, run: () => useApp.getState().selectSite(null) },
+    { id: "settings", label: "Einstellungen", icon: Settings2Icon, run: () => openSettings() },
+    { id: "tour", label: "Einstiegstour starten", icon: CompassIcon, run: () => requestTour() },
+    { id: "ai-keys", label: "KI-Schlüssel verwalten", icon: KeyRoundIcon, run: () => openSettings("ai") },
   ];
 
   const q = query.trim().toLowerCase();

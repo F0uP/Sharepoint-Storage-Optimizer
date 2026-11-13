@@ -1,28 +1,63 @@
 import { describe, expect, it, vi } from "vitest";
-import { analyze, availableProviders, geminiSchema, ProviderError } from "./ai-providers";
+import { analyze, describeVerifyError, geminiSchema, ProviderError, resolveCredentials, serverProviders } from "./ai-providers";
 import { buildPrompt } from "./analyze-request";
 
-describe("availableProviders", () => {
+describe("serverProviders", () => {
   it("lists only providers with an API key", () => {
     vi.stubEnv("OPENAI_API_KEY", "");
     vi.stubEnv("GEMINI_API_KEY", "g-key");
     vi.stubEnv("GOOGLE_API_KEY", "");
-    expect(availableProviders().map((p) => p.id)).toEqual(["gemini"]);
+    expect(serverProviders().map((p) => p.id)).toEqual(["gemini"]);
   });
 
   it("puts the preferred provider (AI_PROVIDER) first", () => {
     vi.stubEnv("OPENAI_API_KEY", "o-key");
     vi.stubEnv("GEMINI_API_KEY", "g-key");
     vi.stubEnv("AI_PROVIDER", "gemini");
-    expect(availableProviders().map((p) => p.id)).toEqual(["gemini", "openai"]);
+    expect(serverProviders().map((p) => p.id)).toEqual(["gemini", "openai"]);
     vi.stubEnv("AI_PROVIDER", "");
-    expect(availableProviders()[0].id).toBe("openai");
+    expect(serverProviders()[0].id).toBe("openai");
   });
 
   it("rejects analysis with an unconfigured provider", async () => {
     vi.stubEnv("OPENAI_API_KEY", "");
     await expect(analyze("openai", "x")).rejects.toBeInstanceOf(ProviderError);
     await expect(analyze("openai", "x")).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+describe("resolveCredentials", () => {
+  it("prefers the key from the settings together with its model", () => {
+    vi.stubEnv("OPENAI_API_KEY", "server-key");
+    vi.stubEnv("OPENAI_MODEL", "server-model");
+    expect(resolveCredentials("openai", { apiKey: "ui-key", model: "ui-model" })).toEqual({ apiKey: "ui-key", model: "ui-model" });
+    expect(resolveCredentials("openai", { apiKey: "ui-key" })).toEqual({ apiKey: "ui-key", model: "gpt-5.4-mini" });
+  });
+
+  it("falls back to the server key and ignores a client model for it", () => {
+    vi.stubEnv("GEMINI_API_KEY", "server-key");
+    vi.stubEnv("GEMINI_MODEL", "");
+    expect(resolveCredentials("gemini", { model: "expensive-model" })).toEqual({ apiKey: "server-key", model: "gemini-3.8-flash" });
+  });
+
+  it("returns null without any key", () => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    vi.stubEnv("GOOGLE_API_KEY", "");
+    expect(resolveCredentials("gemini")).toBeNull();
+  });
+});
+
+describe("describeVerifyError", () => {
+  it("explains invalid keys and unknown models", () => {
+    expect(describeVerifyError("openai", "m", Object.assign(new Error("Incorrect API key"), { status: 401 }))).toMatchObject({
+      status: 401,
+      message: expect.stringContaining("API-Schlüssel ungültig"),
+    });
+    expect(describeVerifyError("gemini", "gemini-x", { status: 400, message: "API key not valid" } as unknown)).toMatchObject({ status: 401 });
+    expect(describeVerifyError("gemini", "gemini-x", Object.assign(new Error("not found"), { status: 404 }))).toMatchObject({
+      status: 404,
+      message: expect.stringContaining("gemini-x"),
+    });
   });
 });
 

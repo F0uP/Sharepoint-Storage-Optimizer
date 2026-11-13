@@ -40,11 +40,12 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# Vorlage für Umgebungsvariablen versionieren
-!.env.example
 
 # tests
 /coverage
 /playwright-report
 /test-results
 /blob-report
+
+# desktop app (staged server, compiled main process, installers)
+/dist-desktop

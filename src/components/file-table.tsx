@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import type * as React from "react";
 import {
   createColumnHelper,
@@ -25,9 +25,13 @@ import {
   ChevronsRightIcon,
   ChevronsUpDownIcon,
   DownloadIcon,
+  EllipsisIcon,
   EyeOffIcon,
   ExternalLinkIcon,
+  FolderDownIcon,
   HistoryIcon,
+  MailIcon,
+  Minimize2Icon,
   SearchXIcon,
   SparklesIcon,
   Trash2Icon,
@@ -39,9 +43,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { BulkActionDialog } from "./bulk-action-dialog";
+import { desktopBridge } from "@/lib/desktop";
 import { downloadCsv, toCsv } from "@/lib/csv";
-import { CATEGORY_META } from "@/lib/file-types";
+import { CATEGORY_META, isCompressible } from "@/lib/file-types";
 import { formatBytes, formatDate, formatNumber, formatRelative } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { AiAction, SpFile } from "@/lib/types";
@@ -53,6 +66,11 @@ export const AI_ACTION_LABEL: Record<AiAction, string> = {
   review: "Prüfen",
   clean_versions: "Versionen bereinigen",
 };
+
+// loaded when opened – keeps the table (used in every view) light
+const BackupDialog = lazy(() => import("./dialogs/backup-dialog").then((m) => ({ default: m.BackupDialog })));
+const CompressDialog = lazy(() => import("./dialogs/compress-dialog").then((m) => ({ default: m.CompressDialog })));
+const NotifyOwnersDialog = lazy(() => import("./dialogs/notify-owners-dialog").then((m) => ({ default: m.NotifyOwnersDialog })));
 
 export interface FileRow {
   id: string;
@@ -184,6 +202,8 @@ export function FileTable({
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: defaultPageSize });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [extraDialog, setExtraDialog] = useState<"notify" | "backup" | "compress" | null>(null);
+  const isDesktop = Boolean(desktopBridge());
 
   const columns = useMemo(() => {
     const select = helper.display({
@@ -453,6 +473,33 @@ export function FileTable({
                 <EyeOffIcon /> Ignorieren
               </Button>
             )}
+            {action === "delete" && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm">
+                    <EllipsisIcon /> Weitere
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" side="top" className="w-64">
+                  <DropdownMenuItem onSelect={() => setExtraDialog("notify")}>
+                    <MailIcon /> Besitzer benachrichtigen
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                    {isDesktop ? "Desktop-App" : "Nur in der Desktop-App"}
+                  </DropdownMenuLabel>
+                  <DropdownMenuItem disabled={!isDesktop} onSelect={() => setExtraDialog("backup")}>
+                    <FolderDownIcon /> Lokal sichern & löschen
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={!isDesktop || !selected.some((r) => isCompressible(r.file))}
+                    onSelect={() => setExtraDialog("compress")}
+                  >
+                    <Minimize2Icon /> Komprimieren
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             <Button size="sm" className="bg-destructive text-white hover:bg-destructive/90" onClick={() => setDialogOpen(true)}>
               {action === "delete" ? <Trash2Icon /> : <HistoryIcon />}
               {action === "delete" ? "Löschen" : "Versionen löschen"}
@@ -460,6 +507,34 @@ export function FileTable({
           </div>
         </div>
       )}
+
+      <Suspense fallback={null}>
+      {extraDialog === "notify" && (
+        <NotifyOwnersDialog open onOpenChange={(o) => !o && setExtraDialog(null)} files={selected.map((r) => r.file)} />
+      )}
+      {extraDialog === "backup" && (
+        <BackupDialog
+          open
+          onOpenChange={(o) => !o && setExtraDialog(null)}
+          files={selected.map((r) => r.file)}
+          onDone={(succeeded) =>
+            setRowSelection((old) => {
+              const next = { ...old };
+              for (const id of succeeded) delete next[id];
+              return next;
+            })
+          }
+        />
+      )}
+      {extraDialog === "compress" && (
+        <CompressDialog
+          open
+          onOpenChange={(o) => !o && setExtraDialog(null)}
+          files={selected.map((r) => r.file)}
+          onDone={clearSelection}
+        />
+      )}
+      </Suspense>
 
       <BulkActionDialog
         open={dialogOpen}

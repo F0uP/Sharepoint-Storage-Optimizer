@@ -3,9 +3,9 @@ import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { z } from "zod";
+import { AI_PROVIDERS, PROVIDER_IDS, type ProviderId } from "@/lib/ai-config";
 
-export const PROVIDER_IDS = ["openai", "gemini"] as const;
-export type ProviderId = (typeof PROVIDER_IDS)[number];
+export { PROVIDER_IDS, type ProviderId };
 
 export interface ProviderInfo {
   id: ProviderId;
@@ -53,23 +53,41 @@ Regeln:
 - priority "high" = großes Potenzial und geringes Risiko.
 - Antworte auf Deutsch, knapp und konkret. Erfinde keine Dateien.`;
 
-const MODELS: Record<ProviderId, string> = {
-  openai: process.env.OPENAI_MODEL || "gpt-5.4-mini",
-  gemini: process.env.GEMINI_MODEL || "gemini-3.8-flash",
-};
-
-const LABELS: Record<ProviderId, string> = { openai: "OpenAI", gemini: "Google Gemini" };
-
-function hasKey(id: ProviderId): boolean {
-  return id === "openai" ? Boolean(process.env.OPENAI_API_KEY) : Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+function envKey(id: ProviderId): string | undefined {
+  return (id === "openai" ? process.env.OPENAI_API_KEY : process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) || undefined;
 }
 
-/** Providers with a configured API key; the preferred one (AI_PROVIDER) comes first. */
-export function availableProviders(): ProviderInfo[] {
+function envModel(id: ProviderId): string {
+  return (id === "openai" ? process.env.OPENAI_MODEL : process.env.GEMINI_MODEL) || AI_PROVIDERS[id].defaultModel;
+}
+
+/**
+ * Providers preset on the server via environment variables – optional, e.g. for a shared Docker
+ * deployment. Normally keys are entered in the app's settings. AI_PROVIDER comes first.
+ */
+export function serverProviders(): ProviderInfo[] {
   const preferred = process.env.AI_PROVIDER as ProviderId | undefined;
-  return PROVIDER_IDS.filter(hasKey)
+  return PROVIDER_IDS.filter((id) => envKey(id))
     .toSorted((a, b) => Number(b === preferred) - Number(a === preferred))
-    .map((id) => ({ id, label: LABELS[id], model: MODELS[id] }));
+    .map((id) => ({ id, label: AI_PROVIDERS[id].label, model: envModel(id) }));
+}
+
+/** Key and model sent by the browser (entered in the settings). */
+export interface ClientCredentials {
+  apiKey?: string;
+  model?: string;
+}
+
+interface Credentials {
+  apiKey: string;
+  model: string;
+}
+
+/** A key from the settings wins; otherwise the server preset (with the server's model) is used. */
+export function resolveCredentials(id: ProviderId, client: ClientCredentials = {}): Credentials | null {
+  if (client.apiKey) return { apiKey: client.apiKey, model: client.model || AI_PROVIDERS[id].defaultModel };
+  const apiKey = envKey(id);
+  return apiKey ? { apiKey, model: envModel(id) } : null;
 }
 
 export class ProviderError extends Error {
@@ -81,9 +99,13 @@ export class ProviderError extends Error {
   }
 }
 
-async function analyzeWithOpenAI(input: string): Promise<Analysis> {
-  const model = MODELS.openai;
-  const client = new OpenAI();
+function statusOf(error: unknown): number {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === "number" && status >= 400 ? status : 502;
+}
+
+async function analyzeWithOpenAI(input: string, { apiKey, model }: Credentials): Promise<Analysis> {
+  const client = new OpenAI({ apiKey });
   try {
     const response = await client.responses.parse({
       model,
@@ -96,8 +118,7 @@ async function analyzeWithOpenAI(input: string): Promise<Analysis> {
     return response.output_parsed;
   } catch (error) {
     if (error instanceof ProviderError) throw error;
-    const status = error instanceof OpenAI.APIError && error.status ? error.status : 502;
-    throw new ProviderError(`OpenAI: ${error instanceof Error ? error.message : String(error)}`, status);
+    throw new ProviderError(`OpenAI: ${error instanceof Error ? error.message : String(error)}`, statusOf(error));
   }
 }
 
@@ -108,9 +129,8 @@ export function geminiSchema() {
   return schema;
 }
 
-async function analyzeWithGemini(input: string): Promise<Analysis> {
-  const model = MODELS.gemini;
-  const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY });
+async function analyzeWithGemini(input: string, { apiKey, model }: Credentials): Promise<Analysis> {
+  const client = new GoogleGenAI({ apiKey });
   let text: string | undefined;
   try {
     const response = await client.models.generateContent({
@@ -125,8 +145,7 @@ async function analyzeWithGemini(input: string): Promise<Analysis> {
     });
     text = response.text;
   } catch (error) {
-    const status = typeof (error as { status?: unknown })?.status === "number" ? (error as { status: number }).status : 502;
-    throw new ProviderError(`Gemini: ${error instanceof Error ? error.message : String(error)}`, status);
+    throw new ProviderError(`Gemini: ${error instanceof Error ? error.message : String(error)}`, statusOf(error));
   }
   let json: unknown;
   try {
@@ -139,9 +158,41 @@ async function analyzeWithGemini(input: string): Promise<Analysis> {
   return parsed.data;
 }
 
-export async function analyze(provider: ProviderId, input: string): Promise<Analysis & ProviderInfo> {
-  const info = availableProviders().find((p) => p.id === provider);
-  if (!info) throw new ProviderError(`${LABELS[provider]} ist nicht konfiguriert.`, 503);
-  const result = provider === "openai" ? await analyzeWithOpenAI(input) : await analyzeWithGemini(input);
-  return { ...result, ...info };
+function notConfigured(id: ProviderId) {
+  return new ProviderError(`${AI_PROVIDERS[id].label} ist nicht eingerichtet – hinterlege einen API-Schlüssel in den Einstellungen.`, 503);
+}
+
+export async function analyze(provider: ProviderId, input: string, client: ClientCredentials = {}): Promise<Analysis & ProviderInfo> {
+  const credentials = resolveCredentials(provider, client);
+  if (!credentials) throw notConfigured(provider);
+  const result =
+    provider === "openai" ? await analyzeWithOpenAI(input, credentials) : await analyzeWithGemini(input, credentials);
+  return { ...result, id: provider, label: AI_PROVIDERS[provider].label, model: credentials.model };
+}
+
+/** Human-readable reason why a key/model check failed. */
+export function describeVerifyError(provider: ProviderId, model: string, error: unknown): ProviderError {
+  const status = statusOf(error);
+  const raw = (error as { message?: unknown } | null)?.message;
+  const message = typeof raw === "string" ? raw : String(error);
+  const label = AI_PROVIDERS[provider].label;
+  if (status === 401 || status === 403 || /api[ _-]?key/i.test(message)) {
+    return new ProviderError(`${label}: API-Schlüssel ungültig oder ohne Berechtigung.`, 401);
+  }
+  if (status === 404) return new ProviderError(`${label}: Modell „${model}“ nicht gefunden.`, 404);
+  return new ProviderError(`${label}: ${message}`, status);
+}
+
+/** Cheap check that key and model work – fetches the model's metadata, no tokens are used. */
+export async function verifyProvider(provider: ProviderId, client: ClientCredentials = {}): Promise<ProviderInfo> {
+  const credentials = resolveCredentials(provider, client);
+  if (!credentials) throw notConfigured(provider);
+  const { apiKey, model } = credentials;
+  try {
+    if (provider === "openai") await new OpenAI({ apiKey }).models.retrieve(model);
+    else await new GoogleGenAI({ apiKey }).models.get({ model });
+  } catch (error) {
+    throw describeVerifyError(provider, model, error);
+  }
+  return { id: provider, label: AI_PROVIDERS[provider].label, model };
 }

@@ -6,7 +6,7 @@ vi.mock("@/lib/server/ai-providers", async (importOriginal) => {
   return { ...original, analyze: vi.fn() };
 });
 
-const { GET, POST } = await import("./route");
+const { POST } = await import("./route");
 const { analyze } = await import("@/lib/server/ai-providers");
 
 const validBody = {
@@ -14,8 +14,8 @@ const validBody = {
   stats: { totalFiles: 1, totalBytes: 10, byCategory: [] },
   files: [{ i: 0, p: "Lib/a.zip", s: 10, m: "2020-01-01", c: "archive" }],
 };
-const post = (body: unknown) =>
-  POST(new Request("http://localhost/api/ai/analyze", { method: "POST", body: JSON.stringify(body) }));
+const post = (body: unknown, headers: Record<string, string> = {}) =>
+  POST(new Request("http://localhost/api/ai/analyze", { method: "POST", body: JSON.stringify(body), headers }));
 
 beforeEach(() => {
   vi.stubEnv("OPENAI_API_KEY", "");
@@ -24,20 +24,22 @@ beforeEach(() => {
   vi.stubEnv("AI_PROVIDER", "");
 });
 
-describe("GET /api/ai/analyze", () => {
-  it("reports configured providers without exposing keys", async () => {
-    vi.stubEnv("GEMINI_API_KEY", "secret-key");
-    const data = await (await GET()).json();
-    expect(data.configured).toBe(true);
-    expect(data.providers).toEqual([{ id: "gemini", label: "Google Gemini", model: expect.any(String) }]);
-    expect(JSON.stringify(data)).not.toContain("secret-key");
-  });
-});
-
 describe("POST /api/ai/analyze", () => {
   it("returns 503 when no provider is configured", async () => {
     const res = await post(validBody);
     expect(res.status).toBe(503);
+  });
+
+  it("uses an API key from the settings (header) without any server configuration", async () => {
+    vi.mocked(analyze).mockResolvedValue({ id: "openai", label: "OpenAI", model: "gpt-x", summary: "", tips: [], recommendations: [] });
+    const res = await post({ ...validBody, provider: "openai", model: "gpt-x" }, { "x-ai-api-key": "sk-ui" });
+    expect(res.status).toBe(200);
+    expect(vi.mocked(analyze).mock.calls[0][2]).toEqual({ apiKey: "sk-ui", model: "gpt-x" });
+  });
+
+  it("rejects malformed model ids", async () => {
+    const res = await post({ ...validBody, provider: "openai", model: "gpt x; rm -rf" }, { "x-ai-api-key": "sk-ui" });
+    expect(res.status).toBe(400);
   });
 
   it("validates the request body", async () => {

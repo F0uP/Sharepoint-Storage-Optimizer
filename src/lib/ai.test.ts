@@ -57,14 +57,26 @@ describe("runAiAnalysis", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await runAiAnalysis(scan, "gemini");
+    const result = await runAiAnalysis(scan, { provider: "gemini", apiKey: "AIza-test", model: "gemini-test" });
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const init = fetchMock.mock.calls[0][1];
+    const body = JSON.parse(init.body);
+    expect(init.headers["x-ai-api-key"]).toBe("AIza-test");
     expect(body.provider).toBe("gemini");
+    expect(body.model).toBe("gemini-test");
     expect(body.files[0]).toMatchObject({ i: 0, p: "Dokumente/Projekte/a.zip", s: 9 * MB });
     expect(body.files[0]).not.toHaveProperty("webUrl");
     expect(result.provider).toBe("Google Gemini");
     expect(result.recommendations).toEqual([{ fileId: scan.files[0].id, action: "delete", priority: "high", reason: "Export" }]);
+  });
+
+  it("relies on the server preset when no key is configured locally", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ summary: "", tips: [], recommendations: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await runAiAnalysis(makeScan([makeFile()]), { provider: "openai", model: "ignored" });
+    const init = fetchMock.mock.calls[0][1];
+    expect(init.headers).not.toHaveProperty("x-ai-api-key");
+    expect(JSON.parse(init.body).model).toBeUndefined();
   });
 
   it("surfaces the server error message", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   ArchiveIcon,
@@ -8,6 +8,7 @@ import {
   KeyRoundIcon,
   Minimize2Icon,
   ScanEyeIcon,
+  Settings2Icon,
   ShieldCheckIcon,
   SparklesIcon,
   Trash2Icon,
@@ -19,14 +20,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { FileTable, type FileRow } from "../file-table";
 import { PageHeader } from "../page-header";
-import { getAiStatus, runAiAnalysis, selectCandidates, type AiStatus } from "@/lib/ai";
+import { openSettings } from "../settings-dialog";
+import { useAiProviders } from "@/hooks/use-ai-providers";
+import { runAiAnalysis, selectCandidates } from "@/lib/ai";
+import type { ProviderId } from "@/lib/ai-config";
+import { apiKeyOf, useSettings } from "@/lib/settings";
 import { errorMessage } from "@/lib/actions";
 import { formatBytes, formatNumber, formatRelative } from "@/lib/format";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import type { AiAction, AiPriority, AiProviderInfo, SpFile } from "@/lib/types";
+import type { AiAction, AiPriority, SpFile } from "@/lib/types";
 
 const ACTIONS: { value: AiAction; label: string; hint: string; icon: LucideIcon }[] = [
   { value: "delete", label: "Löschen", hint: "Verzichtbar", icon: Trash2Icon },
@@ -66,25 +72,25 @@ export function AiView() {
   const ai = useApp((s) => s.ai);
   const setAi = useApp((s) => s.setAi);
   const dismissAi = useApp((s) => s.dismissAi);
-  const [status, setStatus] = useState<AiStatus | null>(null);
-  const [provider, setProvider] = useState<AiProviderInfo["id"] | undefined>();
+  const providers = useAiProviders();
+  const [choice, setChoice] = useState<ProviderId | undefined>();
   const [running, setRunning] = useState(false);
   const [action, setAction] = useState<AiAction>("delete");
-
-  useEffect(() => {
-    getAiStatus().then((s) => {
-      setStatus(s);
-      setProvider(s.providers[0]?.id);
-    });
-  }, []);
+  const configured = providers.length > 0;
 
   const candidateCount = useMemo(() => selectCandidates(scan).files.length, [scan]);
-  const activeProvider = status?.providers.find((p) => p.id === provider);
+  const activeProvider = providers.find((p) => p.id === choice) ?? providers[0];
 
   async function analyze() {
+    if (!activeProvider) return;
     setRunning(true);
     try {
-      const result = await runAiAnalysis(scan, provider);
+      const { settings } = useSettings.getState();
+      const result = await runAiAnalysis(scan, {
+        provider: activeProvider.id,
+        apiKey: activeProvider.source === "local" ? apiKeyOf(settings, activeProvider.id) : undefined,
+        model: activeProvider.model,
+      });
       setAi(result);
       const first = ACTIONS.find((a) => result.recommendations.some((r) => r.action === a.value));
       if (first) setAction(first.value);
@@ -141,13 +147,21 @@ export function AiView() {
 
   const runControls = (
     <div className="flex items-center gap-2">
-      {status && status.providers.length > 1 && (
-        <Select value={provider} onValueChange={(v) => setProvider(v as AiProviderInfo["id"])} disabled={running}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="icon" onClick={() => openSettings("ai")} aria-label="KI-Einstellungen">
+            <Settings2Icon />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>KI-Einstellungen</TooltipContent>
+      </Tooltip>
+      {providers.length > 1 && (
+        <Select value={activeProvider?.id} onValueChange={(v) => setChoice(v as ProviderId)} disabled={running}>
           <SelectTrigger className="w-[190px]" aria-label="KI-Anbieter">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {status.providers.map((p) => (
+            {providers.map((p) => (
               <SelectItem key={p.id} value={p.id}>
                 {p.label} <span className="text-muted-foreground">{p.model}</span>
               </SelectItem>
@@ -155,7 +169,7 @@ export function AiView() {
           </SelectContent>
         </Select>
       )}
-      <Button onClick={analyze} disabled={running || !status?.configured}>
+      <Button onClick={analyze} disabled={running || !configured}>
         {running ? <Spinner /> : <SparklesIcon />}
         {ai ? "Neu analysieren" : "Analyse starten"}
       </Button>
@@ -167,10 +181,10 @@ export function AiView() {
       <PageHeader
         title="KI-Analyse"
         description="Ein Sprachmodell bewertet die relevantesten Dateien und schlägt konkret vor, was gelöscht, archiviert, komprimiert oder bereinigt werden kann."
-        actions={status?.configured ? runControls : undefined}
+        actions={configured ? runControls : undefined}
       />
 
-      {status && !status.configured && (
+      {!configured && (
         <Empty className="rounded-xl border border-dashed py-16">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -178,19 +192,18 @@ export function AiView() {
             </EmptyMedia>
             <EmptyTitle>Noch kein KI-Anbieter verbunden</EmptyTitle>
             <EmptyDescription>
-              Hinterlege einen API-Key für OpenAI oder Google Gemini in <code className="font-mono text-foreground">.env.local</code>{" "}
-              und starte die App neu.
+              Hinterlege einen API-Schlüssel für OpenAI oder Google Gemini – direkt in den Einstellungen, ohne Neustart.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <pre className="rounded-lg border bg-muted/50 px-4 py-3 text-left font-mono text-xs">
-              OPENAI_API_KEY=sk-…{"\n"}GEMINI_API_KEY=…
-            </pre>
+            <Button onClick={() => openSettings("ai")}>
+              <KeyRoundIcon /> API-Schlüssel hinterlegen
+            </Button>
           </EmptyContent>
         </Empty>
       )}
 
-      {status?.configured && !ai && !running && (
+      {configured && !ai && !running && (
         <div className="rounded-xl border border-dashed px-6 py-16 text-center">
           <div className="mx-auto grid size-10 place-items-center rounded-lg bg-muted">
             <SparklesIcon className="size-5" />

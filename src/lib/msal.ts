@@ -5,35 +5,28 @@ import {
 } from "@azure/msal-browser";
 
 export interface AuthConfig {
-  azureClientId: string;
-  azureTenantId: string;
+  clientId: string;
+  tenantId: string;
 }
 
-let config: AuthConfig = { azureClientId: "", azureTenantId: "" };
+let config: AuthConfig = { clientId: "", tenantId: "" };
 let instance: PublicClientApplication | null = null;
 
-/** Applies the runtime configuration served by `/api/config`. */
+/** Applies the app registration from the settings (or a server preset). */
 export function configureMsal(next: AuthConfig) {
   config = next;
   instance = null;
 }
 
-export async function loadAuthConfig(): Promise<AuthConfig> {
-  try {
-    const res = await fetch("/api/config", { cache: "no-store" });
-    if (!res.ok) throw new Error(String(res.status));
-    return (await res.json()) as AuthConfig;
-  } catch {
-    return { azureClientId: "", azureTenantId: "" };
-  }
-}
-
 export function isMsalConfigured(): boolean {
-  return config.azureClientId.length > 0;
+  return config.clientId.length > 0;
 }
 
 /** Delegated Microsoft Graph permissions – none of them require admin consent. */
 export const GRAPH_SCOPES = ["User.Read", "Sites.Read.All", "Files.ReadWrite.All"];
+
+/** Only requested when owners are notified (incremental consent). */
+export const MAIL_SCOPES = ["Mail.Send"];
 
 /** SharePoint REST scope – only needed for version cleanup and emptying the recycle bin. */
 export function sharePointScopes(siteUrl: string): string[] {
@@ -42,17 +35,22 @@ export function sharePointScopes(siteUrl: string): string[] {
 }
 
 export function getMsal(): PublicClientApplication {
-  if (!isMsalConfigured()) throw new Error("AZURE_CLIENT_ID ist nicht gesetzt.");
+  if (!isMsalConfigured()) throw new Error("Die Microsoft-365-Verbindung ist noch nicht eingerichtet (Einstellungen).");
   instance ??= new PublicClientApplication({
     auth: {
-      clientId: config.azureClientId,
-      authority: `https://login.microsoftonline.com/${config.azureTenantId || "organizations"}`,
-      redirectUri: `${window.location.origin}/auth/redirect`,
+      clientId: config.clientId,
+      authority: `https://login.microsoftonline.com/${config.tenantId || "organizations"}`,
+      redirectUri: redirectUri(),
       postLogoutRedirectUri: window.location.origin,
     },
     cache: { cacheLocation: BrowserCacheLocation.LocalStorage },
   });
   return instance;
+}
+
+/** Redirect URI to register in Entra ID (platform "Single-page application"). */
+export function redirectUri(): string {
+  return `${window.location.origin}/auth/redirect`;
 }
 
 export async function signIn() {

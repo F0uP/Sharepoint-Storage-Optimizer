@@ -62,6 +62,17 @@ describe("computeInsights", () => {
   });
 });
 
+describe("Teams recordings", () => {
+  it("are recognised by name or Recordings folder and kept out of the generic video list", () => {
+    const byName = makeFile({ name: "Jour fixe-20260301_100012-Besprechungsaufzeichnung.mp4", category: "video", size: 300 * MB });
+    const byFolder = makeFile({ name: "Call.mp4", path: "Dokumente/Recordings", category: "video", size: 200 * MB });
+    const film = makeFile({ name: "Imagefilm.mp4", category: "video", size: 300 * MB });
+    const insights = computeInsights([byName, byFolder, film], NOW);
+    expect(byId(insights, "recordings").rows.map((r) => r.file.id)).toEqual([byName.id, byFolder.id]);
+    expect(byId(insights, "videos").rows.map((r) => r.file.id)).toEqual([film.id]);
+  });
+});
+
 describe("potential", () => {
   it("counts a file that appears in several insights only once and adds the recycle bin", () => {
     const oldVideo = makeFile({ name: "old.mp4", category: "video", size: 500 * MB, modified: "2018-01-01T00:00:00Z" });

@@ -1,6 +1,15 @@
 "use client";
 
-import { ArrowLeftRightIcon, ChevronsUpDownIcon, LogOutIcon, MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
+import {
+  ArrowLeftRightIcon,
+  ChevronsUpDownIcon,
+  CompassIcon,
+  LogOutIcon,
+  MonitorIcon,
+  MoonIcon,
+  Settings2Icon,
+  SunIcon,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -15,6 +24,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getMsal, isMsalConfigured, signOut } from "@/lib/msal";
+import { openSettings } from "./settings-dialog";
+import { requestTour, showWelcome } from "@/lib/onboarding";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "@/lib/actions";
@@ -92,6 +103,12 @@ export function UserMenu({ compact, className }: { compact?: boolean; className?
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => openSettings()}>
+          <Settings2Icon /> Einstellungen
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => (useApp.getState().scan ? requestTour() : showWelcome())}>
+          <CompassIcon /> Einführung zeigen
+        </DropdownMenuItem>
         {site && (
           <DropdownMenuItem onSelect={() => useApp.getState().selectSite(null)}>
             <ArrowLeftRightIcon /> Site wechseln

@@ -1,6 +1,7 @@
+import { AI_KEY_HEADER, type ProviderId } from "./ai-config";
 import { categoryStats, computeInsights } from "./analysis";
 import { ageInYears } from "./format";
-import type { AiAction, AiPriority, AiProviderInfo, AiResult, ScanResult, SpFile } from "./types";
+import type { AiAction, AiPriority, AiResult, ScanResult, SpFile } from "./types";
 
 const MAX_CANDIDATES = 700;
 
@@ -32,19 +33,34 @@ export function selectCandidates(scan: ScanResult, now = Date.parse(scan.scanned
   return { files: [...picked.values()], duplicates };
 }
 
-export interface AiStatus {
-  configured: boolean;
-  providers: AiProviderInfo[];
+/** Key and model from the settings; without a key the server's preset (if any) is used. */
+export interface AiRunOptions {
+  provider?: ProviderId;
+  apiKey?: string;
+  model?: string;
+  signal?: AbortSignal;
 }
 
-export async function getAiStatus(): Promise<AiStatus> {
-  try {
-    const res = await fetch("/api/ai/analyze", { cache: "no-store" });
-    if (!res.ok) return { configured: false, providers: [] };
-    return await res.json();
-  } catch {
-    return { configured: false, providers: [] };
-  }
+function requestInit({ apiKey, signal }: AiRunOptions, body: unknown): RequestInit {
+  return {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(apiKey ? { [AI_KEY_HEADER]: apiKey } : {}) },
+    body: JSON.stringify(body),
+    signal,
+  };
+}
+
+async function readJson(res: Response, fallback: string) {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error ?? `${fallback} (HTTP ${res.status})`);
+  return data;
+}
+
+/** Checks key and model with the provider before they are saved. */
+export async function verifyAiProvider(options: AiRunOptions & { provider: ProviderId }): Promise<{ model: string }> {
+  const { provider, apiKey, model } = options;
+  const res = await fetch("/api/ai/verify", requestInit(options, { provider, model: apiKey ? model : undefined }));
+  return readJson(res, "Prüfung fehlgeschlagen");
 }
 
 interface RawRecommendation {
@@ -62,10 +78,11 @@ export function mapRecommendations(raw: RawRecommendation[], files: SpFile[]): A
     .map((r) => ({ fileId: files[r.i].id, action: r.action, priority: r.priority, reason: r.reason }));
 }
 
-export async function runAiAnalysis(scan: ScanResult, provider?: AiProviderInfo["id"], signal?: AbortSignal): Promise<AiResult> {
+export async function runAiAnalysis(scan: ScanResult, options: AiRunOptions = {}): Promise<AiResult> {
   const { files, duplicates } = selectCandidates(scan);
   const body = {
-    provider,
+    provider: options.provider,
+    model: options.apiKey ? options.model : undefined,
     siteName: scan.site.name,
     stats: {
       totalFiles: scan.files.length,
@@ -86,14 +103,7 @@ export async function runAiAnalysis(scan: ScanResult, provider?: AiProviderInfo[
     })),
   };
 
-  const res = await fetch("/api/ai/analyze", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error ?? `Analyse fehlgeschlagen (HTTP ${res.status})`);
+  const data = await readJson(await fetch("/api/ai/analyze", requestInit(options, body)), "Analyse fehlgeschlagen");
 
   return {
     createdAt: new Date().toISOString(),

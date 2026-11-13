@@ -10,6 +10,7 @@ tests
 **/*.test.ts
 **/*.test.tsx
 .env*
-!.env.example
 Dockerfile
 README.md
+desktop
+dist-desktop

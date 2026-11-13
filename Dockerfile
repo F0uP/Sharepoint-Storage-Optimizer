@@ -24,5 +24,6 @@ COPY --from=build --chown=app:app /app/.next/static ./.next/static
 COPY --from=build --chown=app:app /app/public ./public
 USER app
 EXPOSE 3000
-# AZURE_CLIENT_ID, AZURE_TENANT_ID, OPENAI_API_KEY, GEMINI_API_KEY … are read at runtime
+# Everything is configured in the app. Optional presets for all users (read at runtime):
+# AZURE_CLIENT_ID, AZURE_TENANT_ID, OPENAI_API_KEY, GEMINI_API_KEY, OPENAI_MODEL, GEMINI_MODEL, AI_PROVIDER
 CMD ["node", "server.js"]

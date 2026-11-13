@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { CopyIcon, HistoryIcon, ScanSearchIcon, SparklesIcon } from "lucide-react";
+import { ArrowRightIcon, CopyIcon, HistoryIcon, ScanSearchIcon, Settings2Icon, SparklesIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { LogoMark } from "./logo";
+import { openSettings } from "./settings-dialog";
 import { ThemeToggle } from "./theme-toggle";
+import { WelcomeDialog } from "./onboarding/welcome-dialog";
 import { isMsalConfigured, signIn } from "@/lib/msal";
 import { useApp } from "@/lib/store";
 import { errorMessage } from "@/lib/actions";
@@ -32,6 +35,7 @@ const FEATURES = [
 export function LoginScreen() {
   const setMode = useApp((s) => s.setMode);
   const [busy, setBusy] = useState(false);
+  const configured = isMsalConfigured();
 
   async function handleSignIn() {
     setBusy(true);
@@ -47,7 +51,15 @@ export function LoginScreen() {
 
   return (
     <div className="relative flex min-h-svh flex-col">
-      <div className="absolute top-4 right-4">
+      <div className="absolute top-4 right-4 flex items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon" onClick={() => openSettings()} aria-label="Einstellungen">
+              <Settings2Icon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Einstellungen</TooltipContent>
+        </Tooltip>
         <ThemeToggle />
       </div>
       <main className="flex flex-1 items-center justify-center px-6 py-16">
@@ -61,21 +73,33 @@ export function LoginScreen() {
           </p>
 
           <div className="mt-8 flex flex-col gap-2">
-            <Button size="lg" className="h-10" onClick={handleSignIn} disabled={!isMsalConfigured() || busy}>
-              {busy ? <Spinner /> : <MicrosoftMark />}
-              Mit Microsoft anmelden
-            </Button>
+            {configured ? (
+              <Button size="lg" className="h-10" onClick={handleSignIn} disabled={busy}>
+                {busy ? <Spinner /> : <MicrosoftMark />}
+                Mit Microsoft anmelden
+              </Button>
+            ) : (
+              <Button size="lg" className="h-10" onClick={() => openSettings("microsoft")}>
+                <MicrosoftMark />
+                Microsoft 365 verbinden
+              </Button>
+            )}
             <Button size="lg" variant="outline" className="h-10" onClick={() => setMode("demo")}>
               Demo ansehen
             </Button>
           </div>
 
-          {!isMsalConfigured() && (
-            <p className="mt-3 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
-              Für die Anmeldung fehlt noch die Azure-App-Registrierung. Trage{" "}
-              <code className="font-mono text-foreground">AZURE_CLIENT_ID</code> in{" "}
-              <code className="font-mono text-foreground">.env.local</code> ein (siehe README).
-            </p>
+          {!configured && (
+            <button
+              type="button"
+              onClick={() => openSettings("microsoft")}
+              className="group mt-3 flex w-full items-center gap-3 rounded-lg border border-dashed px-3 py-2.5 text-left text-xs text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
+            >
+              <span className="flex-1 text-pretty">
+                Einmalig die Azure-App-Registrierung hinterlegen – direkt hier in der App, ohne Konfigurationsdatei.
+              </span>
+              <ArrowRightIcon className="size-3.5 shrink-0 transition-transform group-hover:translate-x-0.5" />
+            </button>
           )}
 
           <ul className="mt-10 space-y-3 border-t pt-6">
@@ -88,6 +112,7 @@ export function LoginScreen() {
           </ul>
         </div>
       </main>
+      <WelcomeDialog onDemo={() => setMode("demo")} />
       <footer className="px-6 pb-6 text-center text-xs text-muted-foreground">
         Zugriff ausschließlich über die Microsoft Graph API – mit deinen eigenen Berechtigungen.
       </footer>

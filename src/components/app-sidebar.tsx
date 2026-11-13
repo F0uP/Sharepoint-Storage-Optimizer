@@ -1,6 +1,15 @@
 "use client";
 
-import { CircleCheckIcon, FolderOpenIcon, LayoutGridIcon, SparklesIcon, ZapIcon, type LucideIcon } from "lucide-react";
+import {
+  CircleCheckIcon,
+  FolderOpenIcon,
+  HistoryIcon,
+  LayoutGridIcon,
+  ListFilterIcon,
+  SparklesIcon,
+  ZapIcon,
+  type LucideIcon,
+} from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -21,11 +30,25 @@ import { useInsights } from "@/hooks/use-insights";
 import { formatBytes, formatNumber, formatPercent } from "@/lib/format";
 import { useApp, type View } from "@/lib/store";
 
-const NAV: { view: View; label: string; icon: LucideIcon }[] = [
-  { view: "overview", label: "Übersicht", icon: LayoutGridIcon },
-  { view: "files", label: "Dateien", icon: FolderOpenIcon },
-  { view: "optimize", label: "Optimierungen", icon: ZapIcon },
-  { view: "ai", label: "KI-Analyse", icon: SparklesIcon },
+type NavItem = { view: View; label: string; icon: LucideIcon };
+
+const NAV: { label: string; items: NavItem[] }[] = [
+  {
+    label: "Analyse",
+    items: [
+      { view: "overview", label: "Übersicht", icon: LayoutGridIcon },
+      { view: "files", label: "Dateien", icon: FolderOpenIcon },
+      { view: "optimize", label: "Optimierungen", icon: ZapIcon },
+      { view: "ai", label: "KI-Analyse", icon: SparklesIcon },
+    ],
+  },
+  {
+    label: "Aufräumen",
+    items: [
+      { view: "rules", label: "Regeln", icon: ListFilterIcon },
+      { view: "history", label: "Verlauf", icon: HistoryIcon },
+    ],
+  },
 ];
 
 export function AppSidebar() {
@@ -34,12 +57,14 @@ export function AppSidebar() {
   const scan = useApp((s) => s.scan)!;
   const { potential } = useInsights();
   const cleanup = useApp((s) => s.cleanup);
+  const historyCount = useApp((s) => s.history.length);
   const quota = scan.quota;
   const usage = quota && quota.total > 0 ? quota.used / quota.total : 0;
 
   const badges: Partial<Record<View, string>> = {
     files: formatNumber(scan.files.length),
     optimize: potential.bytes > 0 ? formatBytes(potential.bytes, 0) : undefined,
+    history: historyCount ? formatNumber(historyCount) : undefined,
   };
 
   return (
@@ -49,22 +74,24 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Analyse</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {NAV.map(({ view: v, label, icon: Icon }) => (
-                <SidebarMenuItem key={v}>
-                  <SidebarMenuButton isActive={view === v} tooltip={label} onClick={() => setView(v)}>
-                    <Icon />
-                    <span>{label}</span>
-                  </SidebarMenuButton>
-                  {badges[v] && <SidebarMenuBadge className="tabular text-muted-foreground">{badges[v]}</SidebarMenuBadge>}
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {NAV.map((group) => (
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map(({ view: v, label, icon: Icon }) => (
+                  <SidebarMenuItem key={v}>
+                    <SidebarMenuButton isActive={view === v} tooltip={label} onClick={() => setView(v)} data-tour={`nav-${v}`}>
+                      <Icon />
+                      <span>{label}</span>
+                    </SidebarMenuButton>
+                    {badges[v] && <SidebarMenuBadge className="tabular text-muted-foreground">{badges[v]}</SidebarMenuBadge>}
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
 
       <SidebarFooter className="gap-3">

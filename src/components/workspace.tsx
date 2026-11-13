@@ -14,6 +14,10 @@ import { OverviewView } from "./views/overview-view";
 import { FilesView } from "./views/files-view";
 import { OptimizeView } from "./views/optimize-view";
 import { AiView } from "./views/ai-view";
+import { RulesView } from "./views/rules-view";
+import { HistoryView } from "./views/history-view";
+import { ReportButton } from "./report-button";
+import { WorkspaceTour } from "./onboarding/workspace-tour";
 import { openSite } from "@/lib/actions";
 import { formatDate, formatRelative } from "@/lib/format";
 import { useApp, type View } from "@/lib/store";
@@ -23,6 +27,8 @@ const TITLES: Record<View, string> = {
   files: "Dateien",
   optimize: "Optimierungen",
   ai: "KI-Analyse",
+  rules: "Regeln",
+  history: "Verlauf",
 };
 
 export function Workspace() {
@@ -57,6 +63,7 @@ export function Workspace() {
               size="sm"
               className="mr-1 hidden w-52 justify-start font-normal text-muted-foreground lg:inline-flex"
               onClick={() => useCommandMenu.getState().setOpen(true)}
+              data-tour="search"
             >
               <SearchIcon /> Suchen …
               <Kbd className="ml-auto">Strg K</Kbd>
@@ -67,6 +74,7 @@ export function Workspace() {
               </TooltipTrigger>
               <TooltipContent>{formatDate(scan.scannedAt)}</TooltipContent>
             </Tooltip>
+            <ReportButton />
             <Button variant="outline" size="sm" onClick={() => openSite(scan.site, true)}>
               <RefreshCwIcon /> Neu scannen
             </Button>
@@ -79,8 +87,11 @@ export function Workspace() {
           {view === "files" && <FilesView key={JSON.stringify(preset)} />}
           {view === "optimize" && <OptimizeView key={JSON.stringify(preset)} />}
           {view === "ai" && <AiView />}
+          {view === "rules" && <RulesView />}
+          {view === "history" && <HistoryView />}
         </div>
       </SidebarInset>
+      <WorkspaceTour />
     </SidebarProvider>
   );
 }

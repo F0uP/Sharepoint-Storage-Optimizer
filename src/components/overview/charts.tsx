@@ -1,11 +1,12 @@
 "use client";
 
-import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ReferenceLine, XAxis, YAxis } from "recharts";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AgeStat, CategoryStat, FolderStat } from "@/lib/analysis";
 import { CATEGORY_META } from "@/lib/file-types";
-import { formatBytes, formatNumber, formatPercent } from "@/lib/format";
+import { formatBytes, formatDate, formatNumber, formatPercent } from "@/lib/format";
+import type { Snapshot } from "@/lib/trend";
 import type { FileCategory } from "@/lib/types";
 
 /* ---------------------------------------------------------- storage by type */
@@ -141,5 +142,92 @@ export function AgeChart({ data }: { data: AgeStat[] }) {
         </span>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------ storage trend */
+
+const trendConfig = {
+  used: { label: "Belegt", color: "var(--chart-1)" },
+} satisfies ChartConfig;
+
+const monthFormat = new Intl.DateTimeFormat("de-DE", { month: "short", year: "2-digit" });
+
+interface TrendRow {
+  t: number;
+  used: number;
+  total: number;
+  deleted: number;
+}
+
+export function TrendChart({ data }: { data: Snapshot[] }) {
+  const rows: TrendRow[] = data.map((d) => ({ t: Date.parse(d.at), used: d.used, total: d.total, deleted: d.deleted }));
+  const total = rows.at(-1)?.total ?? 0;
+  return (
+    <ChartContainer config={trendConfig} className="aspect-auto h-60 w-full">
+      <AreaChart data={rows} margin={{ top: 12, right: 8, left: 4, bottom: 0 }}>
+        <defs>
+          <linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.22} />
+            <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+        <XAxis
+          dataKey="t"
+          type="number"
+          scale="time"
+          domain={["dataMin", "dataMax"]}
+          tickFormatter={(t: number) => monthFormat.format(t)}
+          tickLine={false}
+          axisLine={false}
+          tickMargin={8}
+          minTickGap={40}
+        />
+        <YAxis
+          tickLine={false}
+          axisLine={false}
+          width={60}
+          domain={[0, (max: number) => Math.max(max, total) * 1.05]}
+          tickFormatter={(v: number) => formatBytes(v, 0)}
+          className="tabular"
+        />
+        {total > 0 && (
+          <ReferenceLine
+            y={total}
+            stroke="var(--muted-foreground)"
+            strokeDasharray="4 4"
+            strokeOpacity={0.6}
+            label={{ value: "Kontingent", position: "insideTopRight", fill: "var(--muted-foreground)", fontSize: 11 }}
+          />
+        )}
+        <ChartTooltip
+          cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1, strokeOpacity: 0.5 }}
+          content={({ active, payload }) => {
+            const d = active ? (payload?.[0]?.payload as TrendRow | undefined) : undefined;
+            if (!d) return null;
+            return (
+              <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
+                <div className="font-medium">{formatDate(new Date(d.t).toISOString())}</div>
+                <div className="mt-1 flex items-center gap-1.5 tabular">
+                  <span className="size-2 rounded-[2px] bg-chart-1" />
+                  {formatBytes(d.used)} belegt · {formatPercent(d.used / Math.max(1, d.total))}
+                </div>
+                {d.deleted > 0 && <div className="mt-0.5 text-muted-foreground tabular">davon {formatBytes(d.deleted)} im Papierkorb</div>}
+              </div>
+            );
+          }}
+        />
+        <Area
+          type="monotone"
+          dataKey="used"
+          stroke="var(--chart-1)"
+          strokeWidth={2}
+          fill="url(#trend-fill)"
+          activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--background)" }}
+          isAnimationActive={false}
+        />
+      </AreaChart>
+    </ChartContainer>
   );
 }

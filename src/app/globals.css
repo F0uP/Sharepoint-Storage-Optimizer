@@ -139,6 +139,10 @@
   button:not(:disabled), [role="button"]:not(:disabled) {
     cursor: pointer;
   }
+  /* the key fields bring their own show/hide toggle – hide Edge's built-in one */
+  input[type="password"]::-ms-reveal {
+    display: none;
+  }
   html {
     @apply font-sans;
   }
@@ -148,4 +152,85 @@
   .tabular {
     font-variant-numeric: tabular-nums;
   }
+}
+/* Guided tour (driver.js) in the app's look */
+.driver-popover.spo-tour {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  box-shadow: 0 12px 32px -8px rgb(0 0 0 / 0.25);
+  padding: 16px;
+  max-width: 320px;
+}
+.spo-tour .driver-popover-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.spo-tour .driver-popover-description {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.spo-tour .driver-popover-close-btn {
+  color: var(--muted-foreground);
+}
+.spo-tour .driver-popover-close-btn:hover {
+  color: var(--foreground);
+}
+.spo-tour .driver-popover-footer {
+  margin-top: 16px;
+}
+.spo-tour .driver-popover-progress-text {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.spo-tour .driver-popover-footer-btn {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 7px 10px;
+  border-radius: calc(var(--radius) - 2px);
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  text-shadow: none;
+}
+.spo-tour .driver-popover-footer-btn:hover {
+  background: var(--muted);
+}
+.spo-tour .driver-popover-next-btn {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+.spo-tour .driver-popover-next-btn:hover {
+  background: var(--primary);
+  opacity: 0.9;
+}
+.spo-tour .driver-popover-arrow {
+  border-color: var(--popover);
+}
+.spo-tour .driver-popover-arrow-side-left {
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+  border-right-color: transparent;
+}
+.spo-tour .driver-popover-arrow-side-right {
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+  border-left-color: transparent;
+}
+.spo-tour .driver-popover-arrow-side-top {
+  border-bottom-color: transparent;
+  border-left-color: transparent;
+  border-right-color: transparent;
+}
+.spo-tour .driver-popover-arrow-side-bottom {
+  border-top-color: transparent;
+  border-left-color: transparent;
+  border-right-color: transparent;
 }

@@ -1,17 +1,30 @@
 "use client";
 
 import { useMemo, type ReactNode } from "react";
-import { ArrowRightIcon, DatabaseIcon, ExternalLinkIcon, FilesIcon, HistoryIcon, Trash2Icon, ZapIcon } from "lucide-react";
+import {
+  ArrowRightIcon,
+  CircleCheckIcon,
+  DatabaseIcon,
+  ExternalLinkIcon,
+  FilesIcon,
+  HistoryIcon,
+  TrendingDownIcon,
+  TrendingUpIcon,
+  Trash2Icon,
+  ZapIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "../page-header";
 import { RecycleBinButton } from "../recycle-bin-button";
 import { INSIGHT_ICONS } from "../insight-icons";
-import { AgeChart, FolderBars, StorageSplit } from "../overview/charts";
+import { AgeChart, FolderBars, StorageSplit, TrendChart } from "../overview/charts";
 import { useInsights } from "@/hooks/use-insights";
 import { ageStats, categoryStats, folderStats } from "@/lib/analysis";
 import { CATEGORY_META } from "@/lib/file-types";
-import { formatBytes, formatNumber, formatPercent } from "@/lib/format";
+import { formatBytes, formatDate, formatNumber, formatPercent } from "@/lib/format";
+import { restorableFiles, totalFreed } from "@/lib/history";
+import { trendDelta } from "@/lib/trend";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -22,7 +35,9 @@ function Stat({
   sub,
   children,
   className,
+  tour,
 }: {
+  tour?: string;
   label: string;
   icon: typeof DatabaseIcon;
   value: string;
@@ -31,7 +46,7 @@ function Stat({
   className?: string;
 }) {
   return (
-    <div className={cn("flex flex-col rounded-xl border bg-card p-5", className)}>
+    <div className={cn("flex flex-col rounded-xl border bg-card p-5", className)} data-tour={tour}>
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Icon className="size-4" />
         {label}
@@ -47,6 +62,11 @@ export function OverviewView() {
   const scan = useApp((s) => s.scan)!;
   const setView = useApp((s) => s.setView);
   const { insights, potential } = useInsights();
+  const trend = useApp((s) => s.trend);
+  const history = useApp((s) => s.history);
+  const freedTotal = totalFreed(history);
+  const restorable = history.reduce((s, e) => s + restorableFiles(e).reduce((b, f) => b + f.size, 0), 0);
+  const delta = trendDelta(trend);
   const quota = scan.quota;
 
   const categories = useMemo(() => categoryStats(scan.files), [scan.files]);
@@ -96,6 +116,7 @@ export function OverviewView() {
 
         <Stat
           label="Einsparpotenzial"
+          tour="potential"
           icon={ZapIcon}
           value={formatBytes(potential.bytes)}
           sub={
@@ -195,6 +216,70 @@ export function OverviewView() {
           </CardHeader>
           <CardContent>
             <FolderBars folders={folders} />
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-5">
+        <Card className="lg:col-span-3">
+          <CardHeader>
+            <CardTitle>Speicherverlauf</CardTitle>
+            <CardDescription>
+              {trend.length > 1 ? (
+                <span className="inline-flex items-center gap-1.5">
+                  {delta > 0 ? <TrendingUpIcon className="size-3.5" /> : <TrendingDownIcon className="size-3.5" />}
+                  {delta > 0 ? "+" : "−"}
+                  {formatBytes(Math.abs(delta))} seit {formatDate(trend[0].at)}
+                </span>
+              ) : (
+                "Belegter Speicher über die Zeit"
+              )}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {trend.length > 1 ? (
+              <TrendChart data={trend} />
+            ) : (
+              <div className="grid h-60 place-items-center rounded-lg border border-dashed text-center text-sm text-muted-foreground">
+                <p className="max-w-xs text-pretty">Der Verlauf entsteht mit jedem Scan – in der Desktop-App auch automatisch im Hintergrund.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Aufgeräumt</CardTitle>
+            <CardDescription>Alle Maßnahmen in dieser Site</CardDescription>
+            <CardAction>
+              <Button variant="ghost" size="sm" onClick={() => setView("history")}>
+                Verlauf <ArrowRightIcon />
+              </Button>
+            </CardAction>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-5">
+            <div>
+              <div className="flex items-center gap-2 text-3xl font-semibold tracking-tight">
+                {formatBytes(freedTotal)}
+                {freedTotal > 0 && <CircleCheckIcon className="size-5 text-success" />}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                freigegeben durch {formatNumber(history.length)} {history.length === 1 ? "Maßnahme" : "Maßnahmen"}
+              </div>
+            </div>
+            <dl className="grid grid-cols-2 gap-4 border-t pt-4 text-sm">
+              <div>
+                <dt className="text-xs text-muted-foreground">Wiederherstellbar</dt>
+                <dd className="mt-1 font-medium tabular">{formatBytes(restorable)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">Noch möglich</dt>
+                <dd className="mt-1 font-medium tabular">{formatBytes(potential.bytes)}</dd>
+              </div>
+            </dl>
+            <Button variant="outline" size="sm" className="self-start" onClick={() => setView("rules")}>
+              Regeln anwenden <ArrowRightIcon />
+            </Button>
           </CardContent>
         </Card>
       </div>

@@ -29,6 +29,13 @@ const EXT_LOOKUP = new Map<string, FileCategory>(
 
 export const RAW_IMAGE_EXT = new Set(["raw", "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "raf", "psd", "tif", "tiff"]);
 export const INSTALLER_EXT = new Set(["exe", "msi", "dmg", "pkg", "iso", "apk", "msix", "appx", "img"]);
+/** Formats the desktop app can re-encode in place (same container/extension, so links keep working). */
+export const COMPRESSIBLE_VIDEO_EXT = new Set(["mp4", "m4v", "mov", "mkv", "mts", "m2ts"]);
+export const COMPRESSIBLE_IMAGE_EXT = new Set(["jpg", "jpeg", "png", "webp"]);
+
+export function isCompressible(f: { category: FileCategory; ext: string }) {
+  return (f.category === "video" && COMPRESSIBLE_VIDEO_EXT.has(f.ext)) || (f.category === "image" && COMPRESSIBLE_IMAGE_EXT.has(f.ext));
+}
 export const OFFICE_EXT = new Set(["docx", "docm", "xlsx", "xlsm", "xlsb", "pptx", "pptm", "doc", "xls", "ppt", "one", "vsdx", "pdf"]);
 
 export function getExtension(name: string): string {

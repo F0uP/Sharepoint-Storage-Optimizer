@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     "coverage/**",
     "playwright-report/**",
     "test-results/**",
+    // staged/packaged desktop app
+    "dist-desktop/**",
   ]),
 ]);
 

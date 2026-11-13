@@ -1,8 +1,10 @@
 import { z } from "zod";
-import { PROVIDER_IDS } from "./ai-providers";
+import { MODEL_PATTERN, PROVIDER_IDS } from "@/lib/ai-config";
 
 export const AnalyzeRequestSchema = z.object({
   provider: z.enum(PROVIDER_IDS).optional(),
+  /** Only honoured together with a key from the settings – server presets use the server's model. */
+  model: z.string().regex(MODEL_PATTERN).optional(),
   siteName: z.string().max(300),
   stats: z.object({
     totalFiles: z.number(),

@@ -1,8 +1,19 @@
 import { Client } from "@microsoft/microsoft-graph-client";
 import type { Drive, DriveItem, Site } from "@microsoft/microsoft-graph-types";
 import { categorize, getExtension } from "./file-types";
-import { GRAPH_SCOPES, getAccessToken, sharePointScopes } from "./msal";
-import type { BulkResult, DriveSummary, Quota, ScanProgress, ScanResult, SiteRef, SpFile } from "./types";
+import { GRAPH_SCOPES, getAccessToken, MAIL_SCOPES, sharePointScopes } from "./msal";
+import { leafNameFilter, matchRecycleItems, type RecycleItem } from "./recycle-bin";
+import type {
+  BulkResult,
+  DriveSummary,
+  LibraryVersionSetting,
+  OwnerMail,
+  Quota,
+  ScanProgress,
+  ScanResult,
+  SiteRef,
+  SpFile,
+} from "./types";
 
 let client: Client | null = null;
 
@@ -25,15 +36,21 @@ function toSiteRef(site: Site): SiteRef {
   };
 }
 
+/** Sites the user can access; without a query all of them (paged, up to 500). */
 export async function searchSites(query: string): Promise<SiteRef[]> {
   const q = query.trim() || "*";
-  const res = await graph()
+  const sites: SiteRef[] = [];
+  let res: { value: Site[]; "@odata.nextLink"?: string } = await graph()
     .api("/sites")
     .query({ search: q })
     .select("id,displayName,name,webUrl,description")
-    .top(50)
+    .top(100)
     .get();
-  const sites = (res.value as Site[]).map(toSiteRef);
+  for (let page = 0; ; page++) {
+    sites.push(...res.value.map(toSiteRef));
+    if (!res["@odata.nextLink"] || q !== "*" || page >= 4) break;
+    res = await graph().api(res["@odata.nextLink"]).get();
+  }
   // personal OneDrive sites show up in search results – they are not SharePoint team sites
   return sites.filter((s) => !s.webUrl.includes("-my.sharepoint.com"));
 }
@@ -126,6 +143,8 @@ async function scanDrive(
       created: item.createdDateTime ?? item.lastModifiedDateTime ?? new Date().toISOString(),
       modified: item.lastModifiedDateTime ?? new Date().toISOString(),
       modifiedBy: item.lastModifiedBy?.user?.displayName ?? undefined,
+      // SharePoint adds the editor's e-mail to the identity (not part of the generic type)
+      modifiedByEmail: (item.lastModifiedBy?.user as { email?: string } | undefined)?.email ?? undefined,
       webUrl: item.webUrl ?? "",
       hash: hashes?.quickXorHash ?? hashes?.sha256Hash ?? hashes?.sha1Hash ?? undefined,
     } satisfies SpFile;
@@ -273,12 +292,17 @@ export async function scanVersions(
 
 /* ------------------------------------------------- SharePoint REST (via proxy) */
 
-async function sharePointRest(siteUrl: string, path: string, method: "GET" | "POST" = "POST") {
+async function sharePointRest(
+  siteUrl: string,
+  path: string,
+  method: "GET" | "POST" | "MERGE" = "POST",
+  body?: Record<string, unknown>,
+) {
   const token = await getAccessToken(sharePointScopes(siteUrl));
   const res = await fetch("/api/sharepoint", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ siteUrl, path, method }),
+    body: JSON.stringify({ siteUrl, path, method, body }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error ?? `SharePoint-Fehler (HTTP ${res.status})`);
@@ -327,4 +351,140 @@ export async function emptyRecycleBin(site: SiteRef): Promise<{ secondStage: boo
     // only site collection admins may purge the second stage
     return { secondStage: false };
   }
+}
+
+/* -------------------------------------------------------- site overview */
+
+/** Quota of many sites at once (JSON batching) – the storage overview of the tenant. */
+export async function siteQuotas(
+  sites: SiteRef[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<Map<string, Quota | undefined>> {
+  const requests: BatchRequest[] = sites.map((site, i) => ({ id: String(i), method: "GET", url: `/sites/${site.id}/drive?$select=quota` }));
+  const responses = await runBatched(requests, onProgress);
+  return new Map(sites.map((site, i) => [site.id, toQuota(responses.get(String(i))?.body?.quota as Drive["quota"])]));
+}
+
+/* ------------------------------------------------------ version limits */
+
+export async function getVersionSettings(site: SiteRef, drives: DriveSummary[]): Promise<LibraryVersionSetting[]> {
+  const lists = await runBatched(drives.map((d, i) => ({ id: String(i), method: "GET" as const, url: `/drives/${d.id}/list?$select=id` })));
+  const out: LibraryVersionSetting[] = [];
+  for (const [i, drive] of drives.entries()) {
+    const listId = lists.get(String(i))?.body?.id;
+    if (typeof listId !== "string") continue;
+    const data = await sharePointRest(site.webUrl, `/_api/web/lists(guid'${listId}')?$select=EnableVersioning,MajorVersionLimit`, "GET");
+    const enabled = Boolean(data.EnableVersioning);
+    out.push({ driveId: drive.id, driveName: drive.name, listId, enabled, majorLimit: enabled ? Number(data.MajorVersionLimit) || null : null });
+  }
+  return out;
+}
+
+/** Limits the number of major versions a library keeps (applies to new versions). */
+export async function setVersionLimit(site: SiteRef, setting: LibraryVersionSetting, limit: number): Promise<void> {
+  await sharePointRest(site.webUrl, `/_api/web/lists(guid'${setting.listId}')`, "MERGE", {
+    EnableVersioning: true,
+    MajorVersionLimit: limit,
+  });
+}
+
+/* ------------------------------------------------------------- restore */
+
+/** Restores files deleted by this app from the recycle bin (matched by name, folder and time). */
+export async function restoreFiles(
+  site: SiteRef,
+  files: SpFile[],
+  deletedAfter: string,
+  onProgress?: (done: number, total: number) => void,
+): Promise<BulkResult> {
+  const names = [...new Set(files.map((f) => f.name))];
+  const items: RecycleItem[] = [];
+  for (let i = 0; i < names.length; i += 10) {
+    const filter = encodeURIComponent(leafNameFilter(names.slice(i, i + 10)));
+    const data = await sharePointRest(
+      site.webUrl,
+      `/_api/web/RecycleBin?$select=Id,LeafName,DirName,Size,DeletedDate&$top=1000&$filter=${filter}`,
+      "GET",
+    );
+    items.push(...((data.value ?? []) as RecycleItem[]));
+  }
+  const matches = matchRecycleItems(files, items, deletedAfter);
+  const result: BulkResult = { succeeded: [], failed: [] };
+  let done = 0;
+  const queue = [...files];
+  const worker = async () => {
+    for (let f = queue.shift(); f; f = queue.shift()) {
+      const id = matches.get(f.id);
+      try {
+        if (!id) throw new Error("Nicht im Papierkorb gefunden");
+        await sharePointRest(site.webUrl, `/_api/web/RecycleBin('${id}')/Restore()`);
+        result.succeeded.push(f.id);
+      } catch (e) {
+        result.failed.push({ id: f.id, error: e instanceof Error ? e.message : String(e) });
+      }
+      onProgress?.(++done, files.length);
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
+  return result;
+}
+
+/* ------------------------------------------------ download & replace */
+
+/** Pre-authenticated, short-lived download URLs (the desktop app downloads without a token). */
+export async function getDownloadUrls(files: SpFile[]): Promise<Map<string, string>> {
+  const responses = await runBatched(
+    files.map((f, i) => ({
+      id: String(i),
+      method: "GET" as const,
+      url: `/drives/${f.driveId}/items/${f.id}?$select=id,@microsoft.graph.downloadUrl`,
+    })),
+  );
+  const out = new Map<string, string>();
+  files.forEach((f, i) => {
+    const url = responses.get(String(i))?.body?.["@microsoft.graph.downloadUrl"];
+    if (typeof url === "string") out.set(f.id, url);
+  });
+  return out;
+}
+
+/** Upload session that replaces the content of an existing file (new version, same name and links). */
+export async function createUploadSession(file: SpFile): Promise<string> {
+  const res: { uploadUrl: string } = await graph()
+    .api(`/drives/${file.driveId}/items/${file.id}/createUploadSession`)
+    .post({ item: { "@microsoft.graph.conflictBehavior": "replace" } });
+  return res.uploadUrl;
+}
+
+/* --------------------------------------------------------------- mail */
+
+/** Sends one mail per owner from the signed-in user's mailbox (asks for Mail.Send consent once). */
+export async function sendMails(mails: OwnerMail[], onProgress?: (done: number, total: number) => void): Promise<BulkResult> {
+  const token = await getAccessToken(MAIL_SCOPES);
+  const result: BulkResult = { succeeded: [], failed: [] };
+  for (const [i, mail] of mails.entries()) {
+    try {
+      const res = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: {
+            subject: mail.subject,
+            body: { contentType: "HTML", content: mail.html },
+            toRecipients: [{ emailAddress: { address: mail.to.email, name: mail.to.name } }],
+          },
+          saveToSentItems: true,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error?.message ?? `HTTP ${res.status}`);
+      }
+      result.succeeded.push(mail.to.email);
+    } catch (e) {
+      result.failed.push({ id: mail.to.email, error: e instanceof Error ? e.message : String(e) });
+    }
+    onProgress?.(i + 1, mails.length);
+  }
+  return result;
 }
