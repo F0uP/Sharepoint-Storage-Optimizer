@@ -1,14 +1,25 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CopyPlusIcon, ListFilterIcon, PencilIcon, PlusIcon, Trash2Icon, ZapIcon } from "lucide-react";
+import {
+  CalendarClockIcon,
+  CircleAlertIcon,
+  CopyPlusIcon,
+  ListFilterIcon,
+  PencilIcon,
+  PlusIcon,
+  Trash2Icon,
+  ZapIcon,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BulkActionDialog } from "../bulk-action-dialog";
 import { RuleEditorDialog } from "../dialogs/rule-editor-dialog";
+import { JobDialog } from "../dialogs/job-dialog";
 import { FileTable, type FileRow } from "../file-table";
 import { PageHeader } from "../page-header";
-import { formatBytes, formatNumber } from "@/lib/format";
+import { formatBytes, formatNumber, formatRelative } from "@/lib/format";
+import { JOB_MODE_LABEL, newJob, useJobs, type CleanupJob } from "@/lib/jobs";
 import { BUILTIN_RULES, describeRule, duplicateCopyIds, matchRule, useRules, type CleanupRule } from "@/lib/rules";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -46,6 +57,9 @@ export function RulesView() {
   const [activeId, setActiveId] = useState<string>(custom[0]?.id ?? BUILTIN_RULES[0].id);
   const [editing, setEditing] = useState<CleanupRule | null | undefined>(undefined);
   const [applyOpen, setApplyOpen] = useState(false);
+  const [jobDraft, setJobDraft] = useState<CleanupJob | null>(null);
+  const mode = useApp((s) => s.mode);
+  const jobs = useJobs((s) => s.jobs).filter((j) => j.demo === (mode === "demo"));
 
   const now = Date.parse(scan.scannedAt);
   const matches = useMemo(() => {
@@ -81,6 +95,32 @@ export function RulesView() {
               <nav className="flex flex-col gap-0.5 rounded-xl border bg-card p-1.5">
                 {matches.custom.map((m) => (
                   <RuleItem key={m.rule.id} match={m} active={m.rule.id === active.rule.id} onClick={() => setActiveId(m.rule.id)} />
+                ))}
+              </nav>
+            </div>
+          )}
+          {jobs.length > 0 && (
+            <div>
+              <div className="mb-1.5 px-1 text-xs font-medium text-muted-foreground">Automatisch</div>
+              <nav className="flex flex-col gap-0.5 rounded-xl border bg-card p-1.5" aria-label="Aufräum-Jobs">
+                {jobs.map((job) => (
+                  <button
+                    key={job.id}
+                    onClick={() => setJobDraft(job)}
+                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-muted/60"
+                  >
+                    {job.runs[0] && !job.runs[0].ok ? (
+                      <CircleAlertIcon className="size-4 shrink-0 text-destructive" />
+                    ) : (
+                      <CalendarClockIcon className="size-4 shrink-0 text-muted-foreground" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{job.name}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {JOB_MODE_LABEL[job.mode]} · {job.enabled ? `nächster Lauf ${formatRelative(job.nextRunAt)}` : "pausiert"}
+                      </div>
+                    </div>
+                  </button>
                 ))}
               </nav>
             </div>
@@ -135,6 +175,9 @@ export function RulesView() {
                   </Button>
                 </>
               )}
+              <Button variant="ghost" size="sm" onClick={() => setJobDraft(newJob(active.rule, scan.site, mode === "demo"))}>
+                <CalendarClockIcon /> Automatisieren
+              </Button>
               <Button
                 size="sm"
                 className="bg-destructive text-white hover:bg-destructive/90"
@@ -158,6 +201,7 @@ export function RulesView() {
       </div>
 
       <BulkActionDialog open={applyOpen} onOpenChange={setApplyOpen} rows={active.rows} action="delete" onDone={() => {}} />
+      {jobDraft && <JobDialog job={jobDraft} onClose={() => setJobDraft(null)} />}
       {editing !== undefined && (
         <RuleEditorDialog
           rule={editing}

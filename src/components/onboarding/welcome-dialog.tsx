@@ -5,6 +5,7 @@ import { ArrowRightIcon, CheckIcon, LockKeyholeIcon, Undo2Icon, UserCheckIcon, F
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { hasSeen, markSeen, useOnboarding } from "@/lib/onboarding";
+import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { LogoMark } from "../logo";
 
@@ -73,9 +74,10 @@ const SLIDES: Slide[] = [
   },
 ];
 
-/** First-run introduction on the start screen. */
-export function WelcomeDialog({ onDemo }: { onDemo(): void }) {
+/** First-run introduction; can be reopened from the user menu. */
+export function WelcomeDialog() {
   const open = useOnboarding((s) => s.welcomeOpen);
+  const mode = useApp((s) => s.mode);
   const [index, setIndex] = useState(0);
   const slide = SLIDES[index];
   const last = index === SLIDES.length - 1;
@@ -130,16 +132,18 @@ export function WelcomeDialog({ onDemo }: { onDemo(): void }) {
             )}
             {last ? (
               <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    close();
-                    onDemo();
-                  }}
-                >
-                  Demo ansehen
-                </Button>
+                {!mode && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      close();
+                      useApp.getState().setMode("demo");
+                    }}
+                  >
+                    Demo ansehen
+                  </Button>
+                )}
                 <Button size="sm" onClick={close}>
                   <CheckIcon /> Los geht&apos;s
                 </Button>

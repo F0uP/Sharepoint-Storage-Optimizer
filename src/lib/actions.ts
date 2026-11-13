@@ -7,7 +7,7 @@ import { createEntry, loadHistory, restorableFiles, type HistoryEntry, type Hist
 import { getSource } from "./source";
 import { loadCached, useApp } from "./store";
 import { loadTrend, recordSnapshot } from "./trend";
-import type { BulkResult, LibraryVersionSetting, OwnerMail, ScanResult, SiteRef, SpFile } from "./types";
+import type { BulkResult, LibraryVersionSetting, ScanResult, SiteRef, SpFile } from "./types";
 
 type Progress = (done: number, total: number) => void;
 
@@ -91,20 +91,36 @@ function reportFailures(result: BulkResult, verb: string) {
   toast.error(`${plural(result.failed.length, "Datei konnte", "Dateien konnten")} nicht ${verb} werden`, { description: first });
 }
 
-function record(kind: HistoryKind, files: SpFile[], bytes: number, extra?: Parameters<typeof createEntry>[3]): HistoryEntry {
-  const entry = createEntry(kind, files, bytes, extra);
+function record(
+  kind: HistoryKind,
+  files: SpFile[],
+  bytes: number,
+  extra?: Parameters<typeof createEntry>[3],
+  at?: Date,
+): HistoryEntry {
+  const entry = createEntry(kind, files, bytes, extra, at);
   useApp.getState().pushHistory(entry);
   return entry;
 }
 
-/** Updates the state after a delete and offers undo while the files are still in the recycle bin. */
-function applyDeletion(files: SpFile[], result: BulkResult, permanent: boolean, kind: "delete" | "backup", note?: string) {
+/**
+ * Updates the state after a delete and offers undo while the files are still in the recycle bin.
+ * `startedAt` is when deleting began – restore matches recycle bin items deleted after that moment.
+ */
+function applyDeletion(
+  files: SpFile[],
+  result: BulkResult,
+  permanent: boolean,
+  kind: "delete" | "backup",
+  startedAt: Date,
+  note?: string,
+) {
   const ok = new Set(result.succeeded);
   const deleted = files.filter((f) => ok.has(f.id));
   const freed = deleted.reduce((s, f) => s + f.size, 0);
   useApp.getState().removeFiles(result.succeeded, permanent);
   if (deleted.length) {
-    const entry = record(kind, deleted, freed + deleted.reduce((s, f) => s + (f.versionBytes ?? 0), 0), { permanent, note });
+    const entry = record(kind, deleted, freed + deleted.reduce((s, f) => s + (f.versionBytes ?? 0), 0), { permanent, note }, startedAt);
     toast.success(`${plural(deleted.length, "Datei", "Dateien")} ${kind === "backup" ? "gesichert und gelöscht" : "gelöscht"}`, {
       description: permanent
         ? `${formatBytes(freed)} sofort freigegeben.`
@@ -117,8 +133,9 @@ function applyDeletion(files: SpFile[], result: BulkResult, permanent: boolean, 
 }
 
 export async function deleteFilesAction(files: SpFile[], permanent: boolean, onProgress?: Progress) {
+  const startedAt = new Date();
   const result = await source().deleteFiles(files, permanent, onProgress);
-  applyDeletion(files, result, permanent, "delete");
+  applyDeletion(files, result, permanent, "delete", startedAt);
   return result;
 }
 
@@ -278,8 +295,9 @@ export async function backupAndDeleteAction(
   }
   if (!saved.length) return { succeeded: [], failed };
 
+  const startedAt = new Date();
   const result = await source().deleteFiles(saved, permanent, (d, t) => onProgress?.("delete", d, t));
-  applyDeletion(saved, result, permanent, "backup", `Gesichert in ${folder}`);
+  applyDeletion(saved, result, permanent, "backup", startedAt, `Gesichert in ${folder}`);
   return { succeeded: result.succeeded, failed: [...failed, ...result.failed] };
 }
 
@@ -358,20 +376,33 @@ export async function compressFilesAction(
   return outcomes;
 }
 
-/* ----------------------------------------------------------- notify owners */
+/* ---------------------------------------------------------------- retention */
 
-export async function notifyOwnersAction(mails: OwnerMail[], files: SpFile[], onProgress?: Progress) {
-  try {
-    const result = await source().sendMails(mails, onProgress);
-    if (result.succeeded.length) {
-      record("notify", files, 0, { note: `${plural(result.succeeded.length, "Besitzer", "Besitzer")} benachrichtigt` });
-      toast.success(`${plural(result.succeeded.length, "Mail", "Mails")} verschickt`, {
-        description: "Die Besitzer wurden gebeten, ihre Dateien zu prüfen.",
-      });
-    }
-    if (result.failed.length) toast.error(`${plural(result.failed.length, "Mail", "Mails")} nicht zugestellt`, { description: result.failed[0].error });
-    return result;
-  } catch (e) {
-    toast.error("Mails konnten nicht verschickt werden", { description: errorMessage(e) });
+export interface RetentionCheck {
+  /** labelled as record – cannot be deleted, skipped */
+  blocked: { file: SpFile; label: string }[];
+  /** deletable, but retained: the space stays used in the Preservation Hold Library until the period ends */
+  retained: { file: SpFile; label: string }[];
+  checked: number;
+}
+
+/** Checks retention labels before deleting (up to 1000 files, the largest first). */
+export async function checkRetention(files: SpFile[]): Promise<RetentionCheck> {
+  const subset = files.toSorted((a, b) => b.size - a.size).slice(0, 1000);
+  const labels = await source().getRetentionLabels(subset);
+  const blocked: RetentionCheck["blocked"] = [];
+  const retained: RetentionCheck["retained"] = [];
+  for (const f of subset) {
+    const info = labels.get(f.id);
+    if (!info) continue;
+    if (!info.deleteAllowed) blocked.push({ file: f, label: info.name });
+    else if (info.retains) retained.push({ file: f, label: info.name });
   }
+  return { blocked, retained, checked: subset.length };
+}
+
+export async function loadPreservationHold() {
+  const { site } = useApp.getState();
+  if (!site) return null;
+  return source().getPreservationHold(site);
 }

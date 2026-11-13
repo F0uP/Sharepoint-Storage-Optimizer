@@ -9,7 +9,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { LogoMark } from "./logo";
 import { openSettings } from "./settings-dialog";
 import { ThemeToggle } from "./theme-toggle";
-import { WelcomeDialog } from "./onboarding/welcome-dialog";
 import { isMsalConfigured, signIn } from "@/lib/msal";
 import { useApp } from "@/lib/store";
 import { errorMessage } from "@/lib/actions";
@@ -112,7 +111,6 @@ export function LoginScreen() {
           </ul>
         </div>
       </main>
-      <WelcomeDialog onDemo={() => setMode("demo")} />
       <footer className="px-6 pb-6 text-center text-xs text-muted-foreground">
         Zugriff ausschließlich über die Microsoft Graph API – mit deinen eigenen Berechtigungen.
       </footer>

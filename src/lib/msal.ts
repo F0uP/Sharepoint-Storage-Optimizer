@@ -27,6 +27,10 @@ export const GRAPH_SCOPES = ["User.Read", "Sites.Read.All", "Files.ReadWrite.All
 
 /** Only requested when owners are notified (incremental consent). */
 export const MAIL_SCOPES = ["Mail.Send"];
+/** Teams approvals (Graph beta) – requested on first use. */
+export const APPROVAL_SCOPES = ["ApprovalSolution.ReadWrite"];
+/** Microsoft 365 Archive (Graph beta) – SharePoint administrators only. */
+export const ARCHIVE_SCOPES = ["Sites.Archive.All"];
 
 /** SharePoint REST scope – only needed for version cleanup and emptying the recycle bin. */
 export function sharePointScopes(siteUrl: string): string[] {

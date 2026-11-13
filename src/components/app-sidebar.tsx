@@ -6,6 +6,7 @@ import {
   HistoryIcon,
   LayoutGridIcon,
   ListFilterIcon,
+  UserCheckIcon,
   SparklesIcon,
   ZapIcon,
   type LucideIcon,
@@ -28,6 +29,7 @@ import { Logo } from "./logo";
 import { UserMenu } from "./user-menu";
 import { useInsights } from "@/hooks/use-insights";
 import { formatBytes, formatNumber, formatPercent } from "@/lib/format";
+import { useReviews } from "@/lib/reviews";
 import { useApp, type View } from "@/lib/store";
 
 type NavItem = { view: View; label: string; icon: LucideIcon };
@@ -46,6 +48,7 @@ const NAV: { label: string; items: NavItem[] }[] = [
     label: "Aufräumen",
     items: [
       { view: "rules", label: "Regeln", icon: ListFilterIcon },
+      { view: "reviews", label: "Freigaben", icon: UserCheckIcon },
       { view: "history", label: "Verlauf", icon: HistoryIcon },
     ],
   },
@@ -58,6 +61,10 @@ export function AppSidebar() {
   const { potential } = useInsights();
   const cleanup = useApp((s) => s.cleanup);
   const historyCount = useApp((s) => s.history.length);
+  const mode = useApp((s) => s.mode);
+  const pendingReviews = useReviews((s) =>
+    s.rounds.filter((r) => r.demo === (mode === "demo")).reduce((n, r) => n + r.requests.filter((q) => q.state === "pending").length, 0),
+  );
   const quota = scan.quota;
   const usage = quota && quota.total > 0 ? quota.used / quota.total : 0;
 
@@ -65,6 +72,7 @@ export function AppSidebar() {
     files: formatNumber(scan.files.length),
     optimize: potential.bytes > 0 ? formatBytes(potential.bytes, 0) : undefined,
     history: historyCount ? formatNumber(historyCount) : undefined,
+    reviews: pendingReviews ? `${formatNumber(pendingReviews)} offen` : undefined,
   };
 
   return (

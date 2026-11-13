@@ -19,7 +19,7 @@ const ALLOWED_HOST = /^[a-z0-9-]+\.sharepoint(-mil)?\.(com|us|cn|de)$/i;
 const MERGE_TARGET = /^\/_api\/web\/lists\(guid'[0-9a-f-]{36}'\)$/i;
 const MergeBodySchema = z.strictObject({
   EnableVersioning: z.boolean().optional(),
-  MajorVersionLimit: z.number().int().min(1).max(50000).optional(),
+  MajorVersionLimit: z.number().int().min(100).max(50000).optional(),
 });
 
 export async function POST(request: Request) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { driver, type DriveStep } from "driver.js";
 import "driver.js/dist/driver.css";
 import { hasSeen, markSeen, useOnboarding } from "@/lib/onboarding";
@@ -94,6 +94,7 @@ export function startWorkspaceTour() {
 /** Shows the tour the first time a site is opened; menus can restart it. */
 export function WorkspaceTour() {
   const request = useOnboarding((s) => s.tourRequest);
+  const handled = useRef(request);
 
   useEffect(() => {
     if (hasSeen("workspace")) return;
@@ -102,7 +103,9 @@ export function WorkspaceTour() {
   }, []);
 
   useEffect(() => {
-    if (request > 0) startWorkspaceTour();
+    if (request === handled.current) return;
+    handled.current = request;
+    startWorkspaceTour();
   }, [request]);
 
   return null;

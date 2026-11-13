@@ -10,6 +10,8 @@ import { useApp } from "@/lib/store";
 import { CommandMenu } from "./command-menu";
 import { SettingsDialog } from "./settings-dialog";
 import { DesktopIntegration } from "./desktop-integration";
+import { WelcomeDialog } from "./onboarding/welcome-dialog";
+import { Automation } from "./automation";
 import { LoginScreen } from "./login-screen";
 import { SitePicker } from "./site-picker";
 import { ScanScreen } from "./scan-screen";
@@ -36,7 +38,9 @@ function Shell() {
     <>
       <Screens />
       <SettingsDialog />
+      <WelcomeDialog />
       <DesktopIntegration />
+      <Automation />
     </>
   );
 }

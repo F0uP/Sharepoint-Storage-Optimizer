@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { downloadAll, downloadTo, isAllowedSource, resolveInside, safeSegment } from "./backup.mjs";
 
 let dir: string;
@@ -54,6 +54,13 @@ describe("downloadTo / downloadAll", () => {
     const target = path.join(dir, "b.txt");
     await expect(downloadTo(dataUrl("kurz"), target, 999)).rejects.toThrow(/Unvollständig/);
     expect(await readdir(dir)).toEqual([]);
+  });
+
+  it("trusts the length the server declares (SharePoint adds metadata to Office files)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("12345678", { headers: { "content-length": "8" } })));
+    const res = await downloadTo("https://contoso.sharepoint.com/download.aspx?x=1", path.join(dir, "c.docx"), 5);
+    expect(res.bytes).toBe(8);
+    vi.unstubAllGlobals();
   });
 
   it("reports success and failure per job", async () => {

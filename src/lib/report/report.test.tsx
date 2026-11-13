@@ -27,6 +27,7 @@ describe("PDF report", () => {
     ai: null,
     generatedAt: new Date("2026-11-12T09:00:00Z"),
     demo: false,
+    price: 0.2,
   };
 
   it("renders a PDF with umlauts and all sections", async () => {

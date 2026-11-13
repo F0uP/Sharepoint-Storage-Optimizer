@@ -17,6 +17,8 @@ export interface SpFile {
   modifiedBy?: string;
   /** e-mail of the last editor – used to ask owners to review their files */
   modifiedByEmail?: string;
+  /** Entra object id of the last editor – needed for Teams approvals */
+  modifiedById?: string;
   webUrl: string;
   /** content hash (quickXorHash / sha1) – used for duplicate detection */
   hash?: string;
@@ -31,6 +33,8 @@ export interface SiteRef {
   name: string;
   webUrl: string;
   description?: string;
+  /** last change anywhere in the site (Graph `lastModifiedDateTime`) */
+  lastModified?: string;
 }
 
 export interface Quota {
@@ -113,4 +117,13 @@ export interface OwnerMail {
   to: { name: string; email: string };
   subject: string;
   html: string;
+}
+
+/** Retention label of a file (only files with a label are reported). */
+export interface RetentionInfo {
+  name: string;
+  /** false = record or locked label – the file cannot be deleted */
+  deleteAllowed: boolean;
+  /** content is retained: deleting moves it to the Preservation Hold Library, the space stays used */
+  retains: boolean;
 }

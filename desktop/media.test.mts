@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { compressImage, compressVideo, findFfmpeg, loadSharp, uploadToSession, videoArgs } from "./media.mjs";
+import { compressImage, compressVideo, findFfmpeg, isFfmpegPath, loadSharp, uploadToSession, videoArgs } from "./media.mjs";
 
 const run = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
@@ -17,6 +17,15 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
+});
+
+describe("isFfmpegPath", () => {
+  it("only accepts paths to an ffmpeg binary", () => {
+    expect(isFfmpegPath("C:/Tools/ffmpeg/bin/ffmpeg.exe")).toBe(true);
+    expect(isFfmpegPath("/opt/homebrew/bin/ffmpeg")).toBe(true);
+    expect(isFfmpegPath("C:/Windows/System32/cmd.exe")).toBe(false);
+    expect(isFfmpegPath("/bin/sh")).toBe(false);
+  });
 });
 
 describe("videoArgs", () => {

@@ -1,7 +1,7 @@
 import { Client } from "@microsoft/microsoft-graph-client";
 import type { Drive, DriveItem, Site } from "@microsoft/microsoft-graph-types";
 import { categorize, getExtension } from "./file-types";
-import { GRAPH_SCOPES, getAccessToken, MAIL_SCOPES, sharePointScopes } from "./msal";
+import { APPROVAL_SCOPES, ARCHIVE_SCOPES, GRAPH_SCOPES, getAccessToken, MAIL_SCOPES, sharePointScopes } from "./msal";
 import { leafNameFilter, matchRecycleItems, type RecycleItem } from "./recycle-bin";
 import type {
   BulkResult,
@@ -9,6 +9,7 @@ import type {
   LibraryVersionSetting,
   OwnerMail,
   Quota,
+  RetentionInfo,
   ScanProgress,
   ScanResult,
   SiteRef,
@@ -33,6 +34,7 @@ function toSiteRef(site: Site): SiteRef {
     name: site.displayName || site.name || site.webUrl || "Unbenannte Site",
     webUrl: site.webUrl ?? "",
     description: site.description ?? undefined,
+    lastModified: site.lastModifiedDateTime ?? undefined,
   };
 }
 
@@ -43,7 +45,7 @@ export async function searchSites(query: string): Promise<SiteRef[]> {
   let res: { value: Site[]; "@odata.nextLink"?: string } = await graph()
     .api("/sites")
     .query({ search: q })
-    .select("id,displayName,name,webUrl,description")
+    .select("id,displayName,name,webUrl,description,lastModifiedDateTime")
     .top(100)
     .get();
   for (let page = 0; ; page++) {
@@ -145,6 +147,7 @@ async function scanDrive(
       modifiedBy: item.lastModifiedBy?.user?.displayName ?? undefined,
       // SharePoint adds the editor's e-mail to the identity (not part of the generic type)
       modifiedByEmail: (item.lastModifiedBy?.user as { email?: string } | undefined)?.email ?? undefined,
+      modifiedById: item.lastModifiedBy?.user?.id ?? undefined,
       webUrl: item.webUrl ?? "",
       hash: hashes?.quickXorHash ?? hashes?.sha256Hash ?? hashes?.sha1Hash ?? undefined,
     } satisfies SpFile;
@@ -397,18 +400,26 @@ export async function restoreFiles(
   deletedAfter: string,
   onProgress?: (done: number, total: number) => void,
 ): Promise<BulkResult> {
-  const names = [...new Set(files.map((f) => f.name))];
-  const items: RecycleItem[] = [];
-  for (let i = 0; i < names.length; i += 10) {
-    const filter = encodeURIComponent(leafNameFilter(names.slice(i, i + 10)));
-    const data = await sharePointRest(
-      site.webUrl,
-      `/_api/web/RecycleBin?$select=Id,LeafName,DirName,Size,DeletedDate&$top=1000&$filter=${filter}`,
-      "GET",
-    );
-    items.push(...((data.value ?? []) as RecycleItem[]));
+  const lookup = async (subset: SpFile[]) => {
+    const names = [...new Set(subset.map((f) => f.name))];
+    const items: RecycleItem[] = [];
+    for (let i = 0; i < names.length; i += 10) {
+      const filter = encodeURIComponent(leafNameFilter(names.slice(i, i + 10)));
+      const data = await sharePointRest(
+        site.webUrl,
+        `/_api/web/RecycleBin?$select=Id,LeafName,DirName,Size,DeletedDate&$top=1000&$filter=${filter}`,
+        "GET",
+      );
+      items.push(...((data.value ?? []) as RecycleItem[]));
+    }
+    return matchRecycleItems(subset, items, deletedAfter);
+  };
+  // right after deleting, the recycle bin can lag a few seconds behind Graph
+  const matches = await lookup(files);
+  for (let attempt = 0; attempt < 3 && matches.size < files.length; attempt++) {
+    await sleep(2000);
+    for (const [id, itemId] of await lookup(files.filter((f) => !matches.has(f.id)))) matches.set(id, itemId);
   }
-  const matches = matchRecycleItems(files, items, deletedAfter);
   const result: BulkResult = { succeeded: [], failed: [] };
   let done = 0;
   const queue = [...files];
@@ -487,4 +498,138 @@ export async function sendMails(mails: OwnerMail[], onProgress?: (done: number, 
     onProgress?.(i + 1, mails.length);
   }
   return result;
+}
+
+/* ------------------------------------------------------------- previews */
+
+/** Medium preview images (pre-authenticated URLs) for images, videos and documents. */
+export async function getThumbnails(files: SpFile[]): Promise<Map<string, string>> {
+  const responses = await runBatched(
+    files.map((f, i) => ({ id: String(i), method: "GET" as const, url: `/drives/${f.driveId}/items/${f.id}/thumbnails/0/medium` })),
+  );
+  const out = new Map<string, string>();
+  files.forEach((f, i) => {
+    const url = responses.get(String(i))?.body?.url;
+    if (typeof url === "string") out.set(f.id, url);
+  });
+  return out;
+}
+
+/* ------------------------------------------------------------ retention */
+
+/** Retention labels of the given files (files without a label are missing from the map). */
+export async function getRetentionLabels(files: SpFile[]): Promise<Map<string, RetentionInfo>> {
+  const responses = await runBatched(
+    files.map((f, i) => ({ id: String(i), method: "GET" as const, url: `/drives/${f.driveId}/items/${f.id}/retentionLabel` })),
+  );
+  const out = new Map<string, RetentionInfo>();
+  files.forEach((f, i) => {
+    const r = responses.get(String(i));
+    const body = r?.body as
+      | { name?: string; retentionSettings?: { isDeleteAllowed?: boolean; behaviorDuringRetentionPeriod?: string } }
+      | undefined;
+    if (r?.status !== 200 || !body?.name) return;
+    out.set(f.id, {
+      name: body.name,
+      deleteAllowed: body.retentionSettings?.isDeleteAllowed !== false,
+      retains: /^retain/i.test(body.retentionSettings?.behaviorDuringRetentionPeriod ?? ""),
+    });
+  });
+  return out;
+}
+
+/**
+ * Size of the Preservation Hold Library: with retention policies, deleted and changed files are kept
+ * there and still count against the quota. null = the site has none.
+ */
+export async function getPreservationHold(site: SiteRef): Promise<{ bytes: number; files: number } | null> {
+  const relative = new URL(site.webUrl).pathname.replace(/\/$/, "").replace(/'/g, "''");
+  try {
+    const data = await sharePointRest(
+      site.webUrl,
+      `/_api/web/GetFolderByServerRelativeUrl('${relative}/PreservationHoldLibrary')/StorageMetrics`,
+      "GET",
+    );
+    return { bytes: Number(data.TotalSize ?? 0), files: Number(data.TotalFileCount ?? 0) };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (/not found|nicht gefunden|does not exist|404/i.test(message)) return null;
+    throw e;
+  }
+}
+
+/* ------------------------------------------------- Graph beta: archive, approvals */
+
+const GRAPH_BETA = "https://graph.microsoft.com/beta";
+
+async function betaRequest(url: string, scopes: string[], init: RequestInit = {}): Promise<Response> {
+  const token = await getAccessToken(scopes);
+  return fetch(url.startsWith("http") ? url : `${GRAPH_BETA}${url}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...init.headers },
+  });
+}
+
+async function betaError(res: Response, fallback: string): Promise<Error> {
+  const data = await res.json().catch(() => ({}));
+  return new Error(data?.error?.message ?? `${fallback} (HTTP ${res.status})`);
+}
+
+/** Moves a site to Microsoft 365 Archive (Graph beta, SharePoint administrators only). */
+export async function archiveSite(site: SiteRef): Promise<void> {
+  const res = await betaRequest(`/sites/${site.id}/archive`, ARCHIVE_SCOPES, { method: "POST" });
+  if (res.ok) return;
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Archivieren ist nur mit der Rolle SharePoint-Administrator und aktivem Microsoft 365 Archive möglich.");
+  }
+  throw await betaError(res, "Archivieren fehlgeschlagen");
+}
+
+export interface ApprovalRequest {
+  title: string;
+  description: string;
+  approver: { id: string; name: string };
+}
+
+/**
+ * Creates an approval in the Teams app "Approvals" (Graph beta). The id of the new item is delivered
+ * through a long-running operation; if that is not readable, the item is found by its unique title.
+ */
+export async function createApproval({ title, description, approver }: ApprovalRequest): Promise<string> {
+  const res = await betaRequest("/solutions/approval/approvalItems", APPROVAL_SCOPES, {
+    method: "POST",
+    body: JSON.stringify({
+      displayName: title,
+      description,
+      approvalType: "basic",
+      allowEmailNotification: true,
+      approvers: [{ user: { id: approver.id, displayName: approver.name } }],
+    }),
+  });
+  if (!res.ok) throw await betaError(res, "Freigabe konnte nicht angelegt werden");
+
+  const location = res.headers.get("location");
+  for (let i = 0; location && i < 10; i++) {
+    await sleep(1500);
+    const op = await betaRequest(location, APPROVAL_SCOPES);
+    if (!op.ok) break;
+    const data = (await op.json()) as { status?: string; resourceLocation?: string; error?: { message?: string } };
+    if (data.resourceLocation) return data.resourceLocation.split("/").pop()!;
+    if (data.status === "failed") throw new Error(data.error?.message ?? "Freigabe konnte nicht angelegt werden");
+  }
+  for (let i = 0; i < 6; i++) {
+    await sleep(2000);
+    const list = await betaRequest("/solutions/approval/approvalItems?$select=id,displayName&$top=100", APPROVAL_SCOPES);
+    if (!list.ok) continue;
+    const data = (await list.json()) as { value?: { id: string; displayName: string }[] };
+    const hit = data.value?.find((item) => item.displayName === title);
+    if (hit) return hit.id;
+  }
+  throw new Error("Die Freigabe wurde angelegt, ist aber noch nicht abrufbar.");
+}
+
+export async function getApproval(id: string): Promise<{ state: string; result?: string }> {
+  const res = await betaRequest(`/solutions/approval/approvalItems/${id}?$select=state,result`, APPROVAL_SCOPES);
+  if (!res.ok) throw await betaError(res, "Freigabe konnte nicht gelesen werden");
+  return (await res.json()) as { state: string; result?: string };
 }

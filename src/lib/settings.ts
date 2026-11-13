@@ -23,6 +23,10 @@ export interface Settings {
   desktopThreshold: string;
   desktopAutostart: "on" | "";
   ffmpegPath: string;
+  /** price of additional SharePoint storage per GB and month (for cost estimates) */
+  storagePricePerGb: string;
+  /** a site counts as inactive after this many months without changes */
+  inactiveMonths: string;
 }
 
 export const EMPTY_SETTINGS: Settings = {
@@ -38,6 +42,8 @@ export const EMPTY_SETTINGS: Settings = {
   desktopThreshold: "90",
   desktopAutostart: "",
   ffmpegPath: "",
+  storagePricePerGb: "0.20",
+  inactiveMonths: "12",
 };
 
 /** Optional presets of a server deployment (environment variables, e.g. in Docker). */
@@ -54,6 +60,11 @@ export const STORAGE_KEY = "spo:settings";
 export const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Tenant: GUID or verified domain (contoso.onmicrosoft.com). */
 export const TENANT_PATTERN = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z0-9-]+(\.[a-z0-9-]+)+)$/i;
+
+function validPrice(value: string) {
+  const n = Number(value.replace(",", "."));
+  return value !== "" && Number.isFinite(n) && n >= 0 && n <= 100;
+}
 
 export function sanitizeSettings(raw: unknown): Settings {
   const src = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -79,6 +90,8 @@ export function sanitizeSettings(raw: unknown): Settings {
     desktopThreshold: pick("desktopThreshold", ["75", "80", "90", "95"], "90"),
     desktopAutostart: str("desktopAutostart") === "on" ? "on" : "",
     ffmpegPath: str("ffmpegPath"),
+    storagePricePerGb: validPrice(str("storagePricePerGb")) ? str("storagePricePerGb").replace(",", ".") : "0.20",
+    inactiveMonths: pick("inactiveMonths", ["6", "12", "24", "36"], "12"),
   };
 }
 

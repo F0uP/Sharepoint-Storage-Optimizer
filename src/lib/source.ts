@@ -1,11 +1,13 @@
 import * as demo from "./demo";
 import * as live from "./graph";
+import type { ApprovalRequest } from "./graph";
 import type {
   BulkResult,
   DriveSummary,
   LibraryVersionSetting,
   OwnerMail,
   Quota,
+  RetentionInfo,
   ScanProgress,
   ScanResult,
   SiteRef,
@@ -30,6 +32,12 @@ export interface DataSource {
   getDownloadUrls(files: SpFile[]): Promise<Map<string, string>>;
   createUploadSession(file: SpFile): Promise<string>;
   sendMails(mails: OwnerMail[], onProgress?: Progress): Promise<BulkResult>;
+  getThumbnails(files: SpFile[]): Promise<Map<string, string>>;
+  getRetentionLabels(files: SpFile[]): Promise<Map<string, RetentionInfo>>;
+  getPreservationHold(site: SiteRef): Promise<{ bytes: number; files: number } | null>;
+  archiveSite(site: SiteRef): Promise<void>;
+  createApproval(request: ApprovalRequest): Promise<string>;
+  getApproval(id: string): Promise<{ state: string; result?: string }>;
 }
 
 const liveSource: DataSource = {
@@ -47,6 +55,12 @@ const liveSource: DataSource = {
   getDownloadUrls: live.getDownloadUrls,
   createUploadSession: live.createUploadSession,
   sendMails: live.sendMails,
+  getThumbnails: live.getThumbnails,
+  getRetentionLabels: live.getRetentionLabels,
+  getPreservationHold: live.getPreservationHold,
+  archiveSite: live.archiveSite,
+  createApproval: live.createApproval,
+  getApproval: live.getApproval,
 };
 
 const demoSource: DataSource = {
@@ -69,6 +83,12 @@ const demoSource: DataSource = {
     throw new Error("Im Demo-Modus werden keine Dateien hochgeladen.");
   },
   sendMails: demo.demoSendMails,
+  getThumbnails: demo.demoThumbnails,
+  getRetentionLabels: demo.demoRetentionLabels,
+  getPreservationHold: demo.demoPreservationHold,
+  archiveSite: demo.demoArchiveSite,
+  createApproval: demo.demoCreateApproval,
+  getApproval: demo.demoGetApproval,
 };
 
 export function getSource(mode: "live" | "demo"): DataSource {

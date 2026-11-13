@@ -20,7 +20,8 @@ export function folderTail(path: string): string {
  * started. Same size is preferred (the recycle bin size can include old versions), then the newest.
  */
 export function matchRecycleItems(files: SpFile[], items: RecycleItem[], deletedAfter: string): Map<string, string> {
-  const since = Date.parse(deletedAfter) - 5 * 60_000;
+  // tolerance for clock differences between this computer and SharePoint
+  const since = Date.parse(deletedAfter) - 15 * 60_000;
   const used = new Set<string>();
   const out = new Map<string, string>();
   for (const f of files) {

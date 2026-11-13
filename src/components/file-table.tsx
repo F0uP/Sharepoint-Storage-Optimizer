@@ -52,9 +52,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { BulkActionDialog } from "./bulk-action-dialog";
+import { FileThumbnail } from "./file-thumbnail";
 import { desktopBridge } from "@/lib/desktop";
 import { downloadCsv, toCsv } from "@/lib/csv";
-import { CATEGORY_META, isCompressible } from "@/lib/file-types";
+import { isCompressible } from "@/lib/file-types";
 import { formatBytes, formatDate, formatNumber, formatRelative } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { AiAction, SpFile } from "@/lib/types";
@@ -135,13 +136,9 @@ function SortHeader({ column, label, align = "start" }: { column: SortableColumn
 }
 
 function NameCell({ row }: { row: FileRow }) {
-  const meta = CATEGORY_META[row.file.category];
-  const Icon = meta.icon;
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <div className="grid size-8 shrink-0 place-items-center rounded-md bg-muted/70" title={meta.label}>
-        <Icon className="size-4" style={{ color: meta.color }} />
-      </div>
+      <FileThumbnail file={row.file} />
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="truncate font-medium" title={row.file.name}>
@@ -482,7 +479,7 @@ export function FileTable({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" side="top" className="w-64">
                   <DropdownMenuItem onSelect={() => setExtraDialog("notify")}>
-                    <MailIcon /> Besitzer benachrichtigen
+                    <MailIcon /> Besitzer fragen
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">

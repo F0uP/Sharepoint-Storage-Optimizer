@@ -16,6 +16,7 @@ import { OptimizeView } from "./views/optimize-view";
 import { AiView } from "./views/ai-view";
 import { RulesView } from "./views/rules-view";
 import { HistoryView } from "./views/history-view";
+import { ReviewsView } from "./views/reviews-view";
 import { ReportButton } from "./report-button";
 import { WorkspaceTour } from "./onboarding/workspace-tour";
 import { openSite } from "@/lib/actions";
@@ -28,6 +29,7 @@ const TITLES: Record<View, string> = {
   optimize: "Optimierungen",
   ai: "KI-Analyse",
   rules: "Regeln",
+  reviews: "Freigaben",
   history: "Verlauf",
 };
 
@@ -54,7 +56,7 @@ export function Workspace() {
               {scan.site.name}
             </a>
             <span className="hidden text-muted-foreground/50 sm:block">/</span>
-            <span className="truncate font-medium">{TITLES[view]}</span>
+            <span className="shrink-0 font-medium">{TITLES[view]}</span>
             {mode === "demo" && <Badge variant="secondary">Demo</Badge>}
           </div>
           <div className="ml-auto flex items-center gap-1">
@@ -70,13 +72,13 @@ export function Workspace() {
             </Button>
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="mr-1 hidden text-xs text-muted-foreground md:block">Gescannt {formatRelative(scan.scannedAt)}</span>
+                <span className="mr-1 hidden text-xs whitespace-nowrap text-muted-foreground xl:block">Gescannt {formatRelative(scan.scannedAt)}</span>
               </TooltipTrigger>
               <TooltipContent>{formatDate(scan.scannedAt)}</TooltipContent>
             </Tooltip>
             <ReportButton />
-            <Button variant="outline" size="sm" onClick={() => openSite(scan.site, true)}>
-              <RefreshCwIcon /> Neu scannen
+            <Button variant="outline" size="sm" onClick={() => openSite(scan.site, true)} aria-label="Neu scannen">
+              <RefreshCwIcon /> <span className="hidden xl:inline">Neu scannen</span>
             </Button>
             <ThemeToggle />
           </div>
@@ -88,6 +90,7 @@ export function Workspace() {
           {view === "optimize" && <OptimizeView key={JSON.stringify(preset)} />}
           {view === "ai" && <AiView />}
           {view === "rules" && <RulesView />}
+          {view === "reviews" && <ReviewsView />}
           {view === "history" && <HistoryView />}
         </div>
       </SidebarInset>

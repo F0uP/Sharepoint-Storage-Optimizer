@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useInsights } from "@/hooks/use-insights";
 import { errorMessage } from "@/lib/actions";
+import { pricePerGb } from "@/lib/costs";
+import { useSettings } from "@/lib/settings";
 import { useApp } from "@/lib/store";
 
 export function useReport() {
@@ -20,7 +22,17 @@ export function useReport() {
     try {
       // react-pdf is only loaded when a report is actually created
       const { downloadReport } = await import("@/lib/report/generate");
-      await downloadReport({ scan, insights, potential, history, trend, ai, generatedAt: new Date(), demo: mode === "demo" });
+      await downloadReport({
+        scan,
+        insights,
+        potential,
+        history,
+        trend,
+        ai,
+        generatedAt: new Date(),
+        demo: mode === "demo",
+        price: pricePerGb(useSettings.getState().settings),
+      });
       toast.success("Bericht erstellt", { description: "Das PDF wurde heruntergeladen." });
     } catch (e) {
       toast.error("Bericht konnte nicht erstellt werden", { description: errorMessage(e) });
@@ -35,8 +47,8 @@ export function useReport() {
 export function ReportButton() {
   const { generate, busy } = useReport();
   return (
-    <Button variant="outline" size="sm" onClick={generate} disabled={busy} data-tour="report">
-      {busy ? <Spinner /> : <FileDownIcon />} Bericht
+    <Button variant="outline" size="sm" onClick={generate} disabled={busy} data-tour="report" aria-label="Bericht">
+      {busy ? <Spinner /> : <FileDownIcon />} <span className="hidden xl:inline">Bericht</span>
     </Button>
   );
 }

@@ -8,6 +8,7 @@ import { FileTable } from "../file-table";
 import { PageHeader } from "../page-header";
 import { RecycleBinButton } from "../recycle-bin-button";
 import { VersionLimitsCard } from "../version-limits-card";
+import { RetentionCard } from "../retention-card";
 import { INSIGHT_ICONS } from "../insight-icons";
 import { useInsights } from "@/hooks/use-insights";
 import { scanVersionsAction } from "@/lib/actions";
@@ -173,6 +174,7 @@ export function OptimizeView() {
               </div>
             </div>
           )}
+          <RetentionCard />
         </aside>
 
         <section className="min-w-0">

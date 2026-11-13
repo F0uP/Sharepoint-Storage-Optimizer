@@ -58,19 +58,26 @@ Direkt über die Microsoft Graph API · mit KI-Empfehlungen von OpenAI oder Gemi
 **Analysieren**
 
 - Vollständige Inventur jeder Bibliothek per Delta-Query – Speicher nach Dateityp, größte Ordner, Datenalter, größte Dateien
-- Einsparpotenzial mit risikoarmem Anteil, Speicherverlauf als Trenddiagramm
-- Dateiliste mit Filtern nach Typ, Größe, Alter, Bibliothek und Suche; Befehlspalette mit <kbd>Strg</kbd>+<kbd>K</kbd>
+- Einsparpotenzial mit risikoarmem Anteil – auch in **Euro pro Jahr** (Speicherpreis einstellbar)
+- **Speicherverlauf mit Prognose** – Wachstum pro Monat und „Kontingent voll in ca. X Monaten“
+- **Gesamtanalyse** aller Sites: Potenzial des ganzen Tenants, **Duplikate über Site-Grenzen** und **inaktive Sites**,
+  die sich direkt in Microsoft 365 Archive verschieben lassen
+- Dateiliste mit **Vorschaubildern**, Filtern nach Typ, Größe, Alter, Bibliothek und Suche; Befehlspalette mit <kbd>Strg</kbd>+<kbd>K</kbd>
 
 **Aufräumen**
 
 - Mehrfachauswahl über Seiten hinweg (Shift-Klick für Bereiche), Löschen in den Papierkorb oder endgültig
 - Alte Versionen löschen und **Versionslimits je Bibliothek** setzen, damit der Speicher nicht wieder wächst
-- **Besitzer benachrichtigen** – eine Mail pro Person mit ihren großen Dateien, Links und Frist
+- **Freigaben** – Besitzer entscheiden über ihre Dateien in der Teams-App „Genehmigungen“ oder per Mail; Zugestimmtes
+  (und auf Wunsch Unbeantwortetes nach Fristablauf) landet automatisch im Papierkorb
+- **Automatische Aufräum-Jobs** – Regeln täglich oder wöchentlich ausführen: nur berichten, in den Papierkorb oder Besitzer fragen
 - **PDF-Bericht** mit Kennzahlen, Trend, Einsparmöglichkeiten und Maßnahmen; CSV-Export jeder Liste
 
 **Absichern**
 
 - **Verlauf & Rückgängig** – jede Aktion wird protokolliert, Löschungen lassen sich direkt aus der Meldung oder später wiederherstellen
+- **Aufbewahrungs-Check** – als Datensatz geschützte Dateien werden beim Löschen übersprungen, aufbewahrte markiert; die
+  Größe der Aufbewahrungsbibliothek zeigt, warum Löschen manchmal keinen Speicher freigibt
 - Einstiegstour beim ersten Start, Demo-Modus mit Beispieldaten ohne jede Einrichtung
 
 **Nur in der Desktop-App**
@@ -123,9 +130,13 @@ Die App braucht eine eigene App-Registrierung in Microsoft Entra ID (einmalig, c
 | Microsoft Graph | `Sites.Read.All` | Sites und Bibliotheken auflisten, Dateien scannen |
 | Microsoft Graph | `Files.ReadWrite.All` | Dateien löschen, komprimierte Fassungen hochladen |
 | SharePoint | `AllSites.Manage` | *optional:* Versionen bereinigen, Versionslimits, Papierkorb, Wiederherstellen |
-| Microsoft Graph | `Mail.Send` | *optional:* Besitzer benachrichtigen – wird erst beim ersten Versand angefragt |
+| Microsoft Graph | `Mail.Send` | *optional:* Besitzer per Mail fragen – wird erst beim ersten Versand angefragt |
+| Microsoft Graph | `ApprovalSolution.ReadWrite` | *optional:* Freigaben in Teams ([Beta-API](https://learn.microsoft.com/graph/api/approvalsolution-post-approvalitems?view=graph-rest-beta)) |
+| Microsoft Graph | `Sites.Archive.All` | *optional:* inaktive Sites archivieren – nur mit Rolle SharePoint-Administrator ([Beta-API](https://learn.microsoft.com/graph/api/site-archive?view=graph-rest-beta)) |
 
-Keine davon erfordert zwingend Admin-Zustimmung; je nach Tenant-Richtlinie kann sie nötig sein. Für das Leeren des
+Optionale Berechtigungen fragt die App erst an, wenn die Funktion zum ersten Mal genutzt wird. Keine davon erfordert
+zwingend Admin-Zustimmung; je nach Tenant-Richtlinie kann sie nötig sein. Beta-Schnittstellen kann Microsoft noch ändern –
+für das Archivieren zeigt die App deshalb zusätzlich den passenden PowerShell-Befehl. Für das Leeren des
 endgültigen Papierkorbs (Stufe 2) sind Websitesammlungs-Adminrechte erforderlich.
 
 </details>

@@ -62,7 +62,7 @@ describe("POST /api/sharepoint", () => {
   it.each([
     ["other targets", { ...merge, path: "/_api/web" }],
     ["other fields", { ...merge, body: { Title: "gehackt" } }],
-    ["absurd limits", { ...merge, body: { MajorVersionLimit: 0 } }],
+    ["limits below the SharePoint minimum of 100", { ...merge, body: { MajorVersionLimit: 50 } }],
     ["bodies on other methods", { ...valid, body: { x: 1 } }],
   ])("rejects MERGE with %s", async (_, body) => {
     vi.stubGlobal("fetch", vi.fn());

@@ -29,7 +29,8 @@ function knownLocations(): string[] {
 
 function versionOf(bin: string): Promise<string | null> {
   return new Promise((resolve) => {
-    execFile(bin, ["-hide_banner", "-version"], { timeout: 8000, windowsHide: true }, (error, stdout) => {
+    // generous: the first start of ffmpeg (many DLLs, antivirus scan) can take a while on busy machines
+    execFile(bin, ["-hide_banner", "-version"], { timeout: 30_000, windowsHide: true }, (error, stdout) => {
       if (error) return resolve(null);
       const match = /ffmpeg version (\S+)/.exec(stdout);
       resolve(match ? match[1] : null);
@@ -37,11 +38,26 @@ function versionOf(bin: string): Promise<string | null> {
   });
 }
 
+/** A configured path must point to an ffmpeg binary – nothing else is ever executed. */
+export function isFfmpegPath(file: string): boolean {
+  return /^ffmpeg(\.exe)?$/i.test(path.basename(file.trim()));
+}
+
+/** Found installations are remembered; a miss is not, so installing ffmpeg later works without a restart. */
+const found = new Map<string, FfmpegInfo>();
+
 export async function findFfmpeg(configured?: string): Promise<FfmpegInfo> {
-  const candidates = [configured?.trim(), "ffmpeg", ...knownLocations()].filter((c): c is string => Boolean(c));
+  const own = configured?.trim() && isFfmpegPath(configured) ? configured.trim() : undefined;
+  const cached = found.get(own ?? "");
+  if (cached) return cached;
+  const candidates = [own, "ffmpeg", ...knownLocations()].filter((c): c is string => Boolean(c));
   for (const candidate of candidates) {
     const version = await versionOf(candidate);
-    if (version) return { available: true, path: candidate, version };
+    if (version) {
+      const info = { available: true, path: candidate, version };
+      found.set(own ?? "", info);
+      return info;
+    }
   }
   return { available: false };
 }

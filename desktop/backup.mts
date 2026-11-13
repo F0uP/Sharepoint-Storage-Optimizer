@@ -75,19 +75,25 @@ export function isAllowedSource(url: string): boolean {
   }
 }
 
-/** Streams a URL into a file (".part" until complete) and verifies the size. */
+/**
+ * Streams a URL into a file (".part" until complete) and verifies it is complete. The length the server
+ * declares wins over `expectedSize`: SharePoint writes metadata into Office files on download, so they
+ * can be larger than the size Graph reports.
+ */
 export async function downloadTo(url: string, target: string, expectedSize?: number): Promise<{ path: string; bytes: number }> {
   if (!isAllowedSource(url)) throw new Error("Download-Quelle nicht erlaubt");
   const res = await fetch(url);
   if (!res.ok || !res.body) throw new Error(`Download fehlgeschlagen (HTTP ${res.status})`);
+  const declared = res.headers.get("content-length");
+  const expected = declared !== null && declared !== "" ? Number(declared) : expectedSize;
   await mkdir(path.dirname(target), { recursive: true });
   const final = await uniquePath(target);
   const part = `${final}.part`;
   try {
     await pipeline(Readable.fromWeb(res.body as WebReadableStream<Uint8Array>), createWriteStream(part));
     const { size } = await stat(part);
-    if (expectedSize !== undefined && size !== expectedSize) {
-      throw new Error(`Unvollständig: ${size} statt ${expectedSize} Bytes`);
+    if (expected !== undefined && size !== expected) {
+      throw new Error(`Unvollständig: ${size} statt ${expected} Bytes`);
     }
     await rename(part, final);
     return { path: final, bytes: size };

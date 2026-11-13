@@ -1,7 +1,8 @@
 import { Document, Font, Page, Polyline, Rect, StyleSheet, Svg, Text, View } from "@react-pdf/renderer";
 import { categoryStats, folderStats, type Insight, type PotentialSummary } from "../analysis";
+import { describeForecast, forecast, yearlyCost } from "../costs";
 import { CATEGORY_META } from "../file-types";
-import { formatBytes, formatDate, formatNumber, formatPercent } from "../format";
+import { formatBytes, formatCurrency, formatDate, formatNumber, formatPercent } from "../format";
 import { totalFreed, type HistoryEntry, type HistoryKind } from "../history";
 import type { Snapshot } from "../trend";
 import type { AiResult, ScanResult } from "../types";
@@ -52,6 +53,8 @@ export interface ReportData {
   ai: AiResult | null;
   generatedAt: Date;
   demo: boolean;
+  /** € per GB and month for the cost estimate */
+  price: number;
 }
 
 const KIND_LABEL: Record<HistoryKind, string> = {
@@ -118,7 +121,8 @@ function TrendChart({ trend }: { trend: Snapshot[] }) {
 }
 
 export function ReportDocument({ data }: { data: ReportData }) {
-  const { scan, insights, potential, history, trend, ai, generatedAt } = data;
+  const { scan, insights, potential, history, trend, ai, generatedAt, price } = data;
+  const prediction = forecast(trend, generatedAt.getTime());
   const quota = scan.quota;
   const categories = categoryStats(scan.files).filter((c) => c.count > 0);
   const categoryTotal = categories.reduce((sum, c) => sum + c.bytes, 0) || 1;
@@ -148,12 +152,16 @@ export function ReportDocument({ data }: { data: ReportData }) {
           <View style={s.kpi}>
             <Text style={s.kpiLabel}>Einsparpotenzial</Text>
             <Text style={s.kpiValue}>{formatBytes(potential.bytes)}</Text>
-            <Text style={s.kpiSub}>davon {formatBytes(potential.safeBytes)} risikoarm</Text>
+            <Text style={s.kpiSub}>
+              ca. {formatCurrency(yearlyCost(potential.bytes, price))}/Jahr · {formatBytes(potential.safeBytes)} risikoarm
+            </Text>
           </View>
           <View style={s.kpi}>
             <Text style={s.kpiLabel}>Bereits freigegeben</Text>
             <Text style={s.kpiValue}>{formatBytes(freed)}</Text>
-            <Text style={s.kpiSub}>{formatNumber(history.length)} Maßnahmen</Text>
+            <Text style={s.kpiSub}>
+              ca. {formatCurrency(yearlyCost(freed, price))}/Jahr · {formatNumber(history.length)} Maßnahmen
+            </Text>
           </View>
           <View style={s.kpi}>
             <Text style={s.kpiLabel}>Dateien</Text>
@@ -197,6 +205,12 @@ export function ReportDocument({ data }: { data: ReportData }) {
           <View style={s.section} wrap={false}>
             <Text style={s.h2}>Speicherverlauf</Text>
             <TrendChart trend={trend} />
+            <Text style={{ marginTop: 6 }}>
+              {"growthPerMonth" in prediction
+                ? `Wachstum ${prediction.growthPerMonth >= 0 ? "+" : "-"}${formatBytes(Math.abs(prediction.growthPerMonth))} pro Monat. `
+                : ""}
+              {describeForecast(prediction)}
+            </Text>
           </View>
         )}
 
@@ -265,6 +279,10 @@ export function ReportDocument({ data }: { data: ReportData }) {
             rows={top.map((f) => [`${f.name}\n${f.path}`, formatDate(f.modified), formatBytes(f.size)])}
           />
         </View>
+
+        <Text style={[s.muted, { marginTop: 18, fontSize: 7.5 }]}>
+          Kosten geschätzt mit {formatCurrency(price)} pro GB und Monat.
+        </Text>
 
         <View style={s.footer} fixed>
           <Text>SharePoint Storage Optimizer · {scan.site.name}</Text>

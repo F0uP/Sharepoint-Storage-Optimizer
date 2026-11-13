@@ -16,6 +16,7 @@ import {
   RefreshCwIcon,
   Settings2Icon,
   SparklesIcon,
+  UserCheckIcon,
   SunMoonIcon,
   ZapIcon,
   type LucideIcon,
@@ -84,6 +85,7 @@ export function CommandMenu() {
     { id: "optimize", label: "Optimierungen", icon: ZapIcon, run: () => setView("optimize") },
     { id: "ai", label: "KI-Analyse", icon: SparklesIcon, run: () => setView("ai") },
     { id: "rules", label: "Regeln (Aufräum-Profile)", icon: ListFilterIcon, run: () => setView("rules") },
+    { id: "reviews", label: "Freigaben", icon: UserCheckIcon, run: () => setView("reviews") },
     { id: "history", label: "Verlauf & Rückgängig", icon: ListRestartIcon, run: () => setView("history") },
   ];
   const actions: Entry[] = [

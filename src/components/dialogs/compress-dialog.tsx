@@ -10,7 +10,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { compressFilesAction, type CompressOutcome } from "@/lib/actions";
-import { desktopBridge, type CompressQuality, type MediaStatus } from "@/lib/desktop";
+import { desktopBridge, type CompressQuality, type MediaStatus, type ProgressEvent } from "@/lib/desktop";
 import { isCompressible } from "@/lib/file-types";
 import { formatBytes, formatNumber } from "@/lib/format";
 import { useApp } from "@/lib/store";
@@ -39,7 +39,20 @@ export function CompressDialog({ open, onOpenChange, files, onDone }: Props) {
   const [status, setStatus] = useState<MediaStatus | null>(null);
   const [current, setCurrent] = useState<number | null>(null);
   const [outcomes, setOutcomes] = useState<CompressOutcome[]>([]);
+  // progress of the current file (a large video can take minutes)
+  const [step, setStep] = useState<{ task: "compress" | "upload"; percent: number } | null>(null);
   const running = current !== null;
+
+  useEffect(
+    () =>
+      desktopBridge()?.on("progress", (payload) => {
+        const e = payload as ProgressEvent;
+        if (e.task === "compress" || e.task === "upload") {
+          setStep({ task: e.task, percent: Math.min(100, Math.round((e.done / Math.max(Number.EPSILON, e.total)) * 100)) });
+        }
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (open && mode === "live") desktopBridge()?.mediaStatus().then(setStatus).catch(() => {});
@@ -63,6 +76,7 @@ export function CompressDialog({ open, onOpenChange, files, onDone }: Props) {
     try {
       await compressFilesAction(targets, { quality, backupFolder: keepOriginals && folder ? folder : undefined }, (index, outcome) => {
         setCurrent(index);
+        setStep(null);
         if (outcome) setOutcomes((o) => [...o, outcome]);
       });
     } finally {
@@ -117,7 +131,7 @@ export function CompressDialog({ open, onOpenChange, files, onDone }: Props) {
                 <p className="mt-1 text-xs text-muted-foreground">Für den Fall, dass die Qualität nicht reicht.</p>
                 {keepOriginals && (
                   <Button variant="outline" size="sm" className="mt-2 max-w-full" onClick={chooseFolder} disabled={running}>
-                    <FolderOpenIcon /> <span className="truncate">{folder ?? "Ordner wählen"}</span>
+                    <FolderOpenIcon /> <span className="min-w-0 truncate" title={folder ?? undefined}>{folder ?? "Ordner wählen"}</span>
                   </Button>
                 )}
               </div>
@@ -150,8 +164,13 @@ export function CompressDialog({ open, onOpenChange, files, onDone }: Props) {
             {running && (
               <>
                 <Progress value={(current / Math.max(1, targets.length)) * 100} />
-                <div className="truncate text-xs text-muted-foreground">
-                  {formatNumber(current + 1)} von {formatNumber(targets.length)}: {targets[current]?.name}
+                <div className="flex gap-3 text-xs text-muted-foreground">
+                  <span className="min-w-0 flex-1 truncate">
+                    {formatNumber(current + 1)} von {formatNumber(targets.length)}: {targets[current]?.name}
+                  </span>
+                  <span className="shrink-0 tabular">
+                    {step ? `${step.task === "compress" ? "Komprimieren" : "Hochladen"} ${step.percent} %` : "Lädt …"}
+                  </span>
                 </div>
               </>
             )}

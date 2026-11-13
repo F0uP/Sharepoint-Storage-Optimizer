@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRightIcon, GlobeIcon, SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TenantView } from "./tenant-view";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Logo } from "./logo";
 import { UserMenu } from "./user-menu";
@@ -37,8 +39,11 @@ export function SitePicker() {
   const [query, setQuery] = useState("");
   const [sites, setSites] = useState<SiteRef[] | null>(null);
   const [quotas, setQuotas] = useState<Map<string, Quota | undefined>>(new Map());
+  // quotas already loaded – searching must not request them again (Graph throttling on large tenants)
+  const loaded = useRef(new Map<string, Quota | undefined>());
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>("usage");
+  const [tab, setTab] = useState<"sites" | "tenant">("sites");
 
   useEffect(() => {
     let cancelled = false;
@@ -51,9 +56,11 @@ export function SitePicker() {
         setSites(result);
         // quotas in chunks, so the list fills in progressively
         for (let i = 0; i < result.length && !cancelled; i += 40) {
-          const chunk = result.slice(i, i + 40);
+          const chunk = result.slice(i, i + 40).filter((s) => !loaded.current.has(s.id));
+          if (!chunk.length) continue;
           const map = await getSource(mode).siteQuotas(chunk).catch(() => new Map<string, Quota | undefined>());
-          if (!cancelled) setQuotas((old) => new Map([...old, ...map]));
+          for (const [id, quota] of map) loaded.current.set(id, quota);
+          if (!cancelled) setQuotas(new Map(loaded.current));
         }
       } catch (e) {
         if (!cancelled) {
@@ -92,14 +99,39 @@ export function SitePicker() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-12 sm:px-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Site auswählen</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {sites?.length && known.length
-            ? `${formatNumber(sites.length)} Sites belegen zusammen ${formatBytes(usedTotal)} – die größten zuerst.`
-            : "Welche SharePoint-Site soll analysiert werden?"}
-        </p>
+      <main className={`mx-auto w-full flex-1 px-4 py-12 sm:px-6 ${tab === "tenant" ? "max-w-5xl" : "max-w-3xl"}`}>
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">{tab === "tenant" ? "Gesamtanalyse" : "Site auswählen"}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {tab === "tenant"
+                ? "Alle Sites zusammen: Potenzial, Duplikate über Site-Grenzen und inaktive Sites."
+                : sites?.length && known.length
+                  ? `${formatNumber(sites.length)} Sites belegen zusammen ${formatBytes(usedTotal)} – die größten zuerst.`
+                  : "Welche SharePoint-Site soll analysiert werden?"}
+            </p>
+          </div>
+          <Tabs
+            value={tab}
+            onValueChange={(v) => {
+              setTab(v as "sites" | "tenant");
+              // the overall analysis always covers all sites
+              if (v === "tenant") setQuery("");
+            }}
+          >
+            <TabsList>
+              <TabsTrigger value="sites">Sites</TabsTrigger>
+              <TabsTrigger value="tenant">Gesamtanalyse</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
 
+        {tab === "tenant" ? (
+          <div className="mt-6">
+            <TenantView sites={query ? null : sites} />
+          </div>
+        ) : (
+        <>
         <div className="mt-6 flex flex-col gap-3 sm:flex-row">
           <div className="relative flex-1">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -191,6 +223,8 @@ export function SitePicker() {
           <p className="mt-3 text-xs text-muted-foreground">
             Balkenlänge = belegter Speicher im Vergleich der Sites, Farbe = Auslastung des Kontingents (orange ab 75 %, rot ab 90 %).
           </p>
+        )}
+        </>
         )}
       </main>
     </div>

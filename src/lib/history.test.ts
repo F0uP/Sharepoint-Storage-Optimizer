@@ -27,6 +27,19 @@ describe("history", () => {
     expect(totalFreed(entries)).toBe(90);
   });
 
+  it("keeps full file lists only while undo is possible", () => {
+    const many = Array.from({ length: 50 }, () => makeFile());
+    expect(createEntry("versions", many, 1).files).toHaveLength(20);
+    expect(createEntry("delete", many, 1, { permanent: true }).files).toHaveLength(20);
+    const recycled = createEntry("delete", many, 1, { permanent: false }, new Date("2026-01-01T00:00:00Z"));
+    expect(recycled.files).toHaveLength(50);
+    expect(recycled.fileCount).toBe(50);
+    // once the 93 days are over, the list is trimmed as well
+    const later = addEntry([recycled], createEntry("notify", [], 0), Date.parse("2026-06-01T00:00:00Z"));
+    expect(later[1].files).toHaveLength(20);
+    expect(later[1].fileCount).toBe(50);
+  });
+
   it("keeps the newest entries first and caps the list", () => {
     let list = [createEntry("notify", [], 0)];
     const newest = createEntry("versions", [], 1);

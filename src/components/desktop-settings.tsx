@@ -94,7 +94,7 @@ export function DesktopSettings({ draft, patch }: { draft: Settings; patch: Patc
       <Field orientation="horizontal">
         <FieldContent>
           <FieldLabel htmlFor="desktop-autostart">Bei der Anmeldung starten</FieldLabel>
-          <FieldDescription>Startet unsichtbar im Infobereich, damit die Prüfung auch ohne geöffnetes Fenster läuft.</FieldDescription>
+          <FieldDescription>Mit „Im Hintergrund weiterlaufen“ startet die App direkt im Infobereich, sonst mit Fenster.</FieldDescription>
         </FieldContent>
         <Switch id="desktop-autostart" checked={draft.desktopAutostart === "on"} onCheckedChange={(v) => patch({ desktopAutostart: v ? "on" : "" })} />
       </Field>

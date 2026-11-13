@@ -37,8 +37,9 @@ const APP_ID = "app.storage-optimizer.desktop";
 const PREFERRED_PORT = 41731;
 const SMOKE_TEST = process.argv.includes("--smoke-test");
 const DEV_URL = app.isPackaged ? undefined : process.env.DESKTOP_DEV_URL;
-/** Started at login → stay in the tray (evaluated after "ready"). */
-const startHidden = () =>
+/** Started at login → stay in the tray, but only if background mode (tray icon) is on. Set in start(). */
+let startInTray = false;
+const startedAtLogin = () =>
   process.argv.includes("--hidden") || (process.platform === "darwin" && app.getLoginItemSettings().wasOpenedAtLogin);
 
 const LOGIN_HOSTS = new Set([
@@ -239,7 +240,7 @@ function createWindow(): BrowserWindow {
     },
   });
   win.once("ready-to-show", () => {
-    if (!startHidden() || SMOKE_TEST) win.show();
+    if (!startInTray || SMOKE_TEST) win.show();
   });
 
   // MSAL sign-in popups stay inside the app, every other link goes to the default browser
@@ -444,6 +445,7 @@ async function start() {
   hardenSession();
   registerIpc();
 
+  startInTray = startedAtLogin() && (await readSettings()).desktopBackground === "on";
   mainWindow = createWindow();
   // data: URL instead of file:// – the file protocol has no extra privileges (fuse), so it can't read app.asar
   const loading = await readFile(path.join(app.getAppPath(), "loading.html"), "utf8");

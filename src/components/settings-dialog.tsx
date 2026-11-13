@@ -22,6 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DesktopSettings } from "./desktop-settings";
+import { GeneralSettings } from "./general-settings";
 import { errorMessage } from "@/lib/actions";
 import { verifyAiProvider } from "@/lib/ai";
 import { AI_PROVIDERS, MODEL_PATTERN, PROVIDER_IDS, type ProviderId } from "@/lib/ai-config";
@@ -37,7 +38,7 @@ import {
   type Settings,
 } from "@/lib/settings";
 
-export type SettingsTab = "microsoft" | "ai" | "desktop";
+export type SettingsTab = "microsoft" | "ai" | "general" | "desktop";
 
 export const useSettingsDialog = create<{ open: boolean; tab: SettingsTab }>()(() => ({ open: false, tab: "microsoft" }));
 
@@ -120,6 +121,7 @@ function SettingsForm({ initialTab }: { initialTab: SettingsTab }) {
         <TabsList className="w-full shrink-0">
           <TabsTrigger value="microsoft">Microsoft 365</TabsTrigger>
           <TabsTrigger value="ai">KI-Anbieter</TabsTrigger>
+          <TabsTrigger value="general">Allgemein</TabsTrigger>
           {desktopBridge() && <TabsTrigger value="desktop">Desktop</TabsTrigger>}
         </TabsList>
         {/* only the content scrolls – header, tabs and buttons stay in place */}
@@ -129,6 +131,9 @@ function SettingsForm({ initialTab }: { initialTab: SettingsTab }) {
           </TabsContent>
           <TabsContent value="ai">
             <AiSection draft={draft} patch={patch} server={server} />
+          </TabsContent>
+          <TabsContent value="general">
+            <GeneralSettings draft={draft} patch={patch} />
           </TabsContent>
           {desktopBridge() && (
             <TabsContent value="desktop">

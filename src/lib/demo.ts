@@ -4,9 +4,11 @@ import type { Snapshot } from "./trend";
 import type {
   BulkResult,
   DriveSummary,
+  FileCategory,
   LibraryVersionSetting,
   OwnerMail,
   Quota,
+  RetentionInfo,
   ScanProgress,
   ScanResult,
   SiteRef,
@@ -41,6 +43,23 @@ export const DEMO_SITES: SiteRef[] = [
   { id: "demo-gf", name: "Geschäftsführung", webUrl: "https://contoso.sharepoint.com/sites/gf", description: "Berichte und Beschlüsse" },
 ];
 
+/** Sites without changes for a long time – suggested for archiving in the overall analysis. */
+const INACTIVE_SITES = new Set(["demo-gf", "demo-qm"]);
+const INACTIVE_SINCE = Date.parse("2025-03-14T10:00:00Z");
+
+for (const site of DEMO_SITES) {
+  site.lastModified = INACTIVE_SITES.has(site.id) ? new Date(INACTIVE_SINCE).toISOString() : new Date(Date.now() - 2 * 864e5).toISOString();
+}
+
+/** Files that exist in several sites – found by the cross-site duplicate check. */
+const SHARED_FILES = [
+  { name: "Imagefilm 2024 final.mp4", folder: "Videos/Kampagnen", size: 2.4 * GB, sites: 6 },
+  { name: "Messe-Rundgang 2024.mp4", folder: "Videos/Kampagnen", size: 1.6 * GB, sites: 4 },
+  { name: "Firmenpräsentation 2025.pptx", folder: "Präsentationen", size: 186 * MB, sites: 8 },
+  { name: "Logo-Paket komplett.zip", folder: "Design", size: 740 * MB, sites: 5 },
+  { name: "Mitarbeiterhandbuch.pdf", folder: "Dokumente", size: 48 * MB, sites: 7 },
+];
+
 /** Number of generated files per demo site (drives the site's size). */
 const FILE_COUNT: Record<string, number> = {
   "demo-marketing": 3200,
@@ -55,6 +74,7 @@ const FILE_COUNT: Record<string, number> = {
 
 const PEOPLE = ["Anna Weber", "Jonas Keller", "Lea Hoffmann", "Max Braun", "Sophie Wagner", "Felix Schulz", "Mara Fischer"];
 const emailOf = (name: string) => `${name.toLowerCase().replace(/\s+/g, ".")}@contoso.com`;
+const idOf = (name: string) => `00000000-0000-4000-8000-${String(PEOPLE.indexOf(name) + 1).padStart(12, "0")}`;
 
 interface Template {
   folder: string;
@@ -73,7 +93,7 @@ const TEMPLATES: Template[] = [
   { folder: "Fotos/Events", names: ["IMG_", "DSC0", "Event_", "Sommerfest_", "Messe_"], ext: ["jpg", "jpg", "jpeg", "heic", "png"], median: 6 * MB, spread: 0.8, weight: 14 },
   { folder: "Fotos/Shootings", names: ["Shooting_", "Portrait_", "Produkt_", "_MG_"], ext: ["cr3", "nef", "arw", "dng", "jpg", "tif"], median: 38 * MB, spread: 0.6, weight: 7 },
   { folder: "Design", names: ["Plakat", "Flyer", "Banner", "Keyvisual", "Messestand", "Broschüre"], ext: ["psd", "ai", "pdf", "eps", "png"], median: 140 * MB, spread: 1.0, weight: 4 },
-  { folder: "Dokumente", names: ["Konzept", "Protokoll", "Angebot", "Briefing", "Bericht", "Entwurf", "Freigabe", "Pressemitteilung"], ext: ["docx", "docx", "pdf", "xlsx", "pptx"], median: 1.2 * MB, spread: 1.2, weight: 30 },
+  { folder: "Dokumente", names: ["Konzept", "Protokoll", "Angebot", "Briefing", "Bericht", "Entwurf", "Freigabe", "Pressemitteilung", "Vertrag", "Rechnung"], ext: ["docx", "docx", "pdf", "xlsx", "pptx"], median: 1.2 * MB, spread: 1.2, weight: 30 },
   { folder: "Präsentationen", names: ["Quartalsreview", "Pitch", "Kickoff", "Strategie", "Vertriebsmeeting"], ext: ["pptx", "pptx", "pdf"], median: 28 * MB, spread: 0.9, weight: 7 },
   { folder: "Archiv", names: ["Backup", "Export", "Altdaten", "Projektarchiv", "Sicherung"], ext: ["zip", "zip", "rar", "7z"], median: 900 * MB, spread: 1.0, weight: 3 },
   { folder: "Software", names: ["Setup", "Installer", "Treiber", "Update"], ext: ["exe", "msi", "iso", "dmg"], median: 380 * MB, spread: 1.0, weight: 1 },
@@ -108,6 +128,8 @@ export function generateDemoScan(site: SiteRef): ScanResult {
   const make = (driveName: string, folder: string, name: string, size: number, modified: number, hash?: string): SpFile => {
     const id = `${site.id}-${n++}`;
     const ext = getExtension(name);
+    // inactive demo sites: nothing changed after INACTIVE_SINCE
+    if (INACTIVE_SITES.has(site.id)) modified = Math.min(modified, INACTIVE_SINCE);
     const modifiedIso = new Date(modified).toISOString();
     const person = pick(rnd, PEOPLE);
     return {
@@ -123,6 +145,7 @@ export function generateDemoScan(site: SiteRef): ScanResult {
       modified: modifiedIso,
       modifiedBy: person,
       modifiedByEmail: emailOf(person),
+      modifiedById: idOf(person),
       webUrl: `${site.webUrl}/${encodeURIComponent(driveName)}/${folder.split("/").map(encodeURIComponent).join("/")}/${encodeURIComponent(name)}`,
       hash: hash ?? `h${seed}-${n}`,
     };
@@ -141,7 +164,7 @@ export function generateDemoScan(site: SiteRef): ScanResult {
       ? `${base}-${stamp()}-Besprechungsaufzeichnung.mp4`
       : /_$|0$/.test(base) ? `${base}${String(Math.floor(rnd() * 9000) + 1000)}.${ext}` : `${base} ${year}${rnd() > 0.6 ? ` v${Math.ceil(rnd() * 4)}` : ""}${rnd() > 0.85 ? " final" : ""}.${ext}`;
     const yearStart = Date.UTC(Number(year), 0, 1);
-    const modified = Math.min(now - 864e5, yearStart + rnd() * 365 * 864e5);
+    const modified = Math.min(INACTIVE_SITES.has(site.id) ? INACTIVE_SINCE : now - 864e5, yearStart + rnd() * 365 * 864e5);
     files.push(make(driveName, folder, name, logNormal(rnd, t.median, t.spread), modified));
   }
 
@@ -155,6 +178,14 @@ export function generateDemoScan(site: SiteRef): ScanResult {
       files.push(make(src.driveName, folder, name, src.size, new Date(src.modified).getTime() + rnd() * 30 * 864e5, src.hash));
     }
   }
+
+  // the same files in several sites (cross-site duplicates)
+  const siteIndex = DEMO_SITES.findIndex((s) => s.id === site.id);
+  SHARED_FILES.forEach((shared, i) => {
+    if (siteIndex < 0 || siteIndex >= shared.sites) return;
+    const modified = Math.min(INACTIVE_SITES.has(site.id) ? INACTIVE_SINCE : now - 864e5, Date.parse("2025-01-20T09:00:00Z") + i * 864e5);
+    files.push(make(siteIndex % 2 ? "Dokumente" : "Marketing-Assets", shared.folder, shared.name, shared.size, modified, `shared-${i}`));
+  });
 
   // junk files
   for (let i = 0; i < 140; i++) {
@@ -280,6 +311,29 @@ export async function demoSendMails(mails: OwnerMail[], onProgress?: (d: number,
   return { succeeded: mails.map((m) => m.to.email), failed: [] };
 }
 
+const DEMO_COLORS: Record<FileCategory, [string, string]> = {
+  video: ["#2a78d6", "#123e73"],
+  image: ["#eb6834", "#8a3412"],
+  document: ["#1baf7a", "#0d5c40"],
+  archive: ["#eda100", "#7a5300"],
+  audio: ["#e87ba4", "#7d2c4b"],
+  other: ["#737373", "#262626"],
+};
+
+/** Generated preview for the demo: a gradient with the file type. */
+function demoThumbnail(file: SpFile): string {
+  const [from, to] = DEMO_COLORS[file.category];
+  const seed = [...file.id].reduce((s, c) => s + c.charCodeAt(0), 0);
+  const angle = seed % 360;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200" viewBox="0 0 320 200">
+<defs><linearGradient id="g" gradientTransform="rotate(${angle} .5 .5)"><stop offset="0" stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient></defs>
+<rect width="320" height="200" fill="url(#g)"/>
+<circle cx="${60 + (seed % 200)}" cy="${40 + (seed % 120)}" r="${30 + (seed % 40)}" fill="#fff" fill-opacity=".12"/>
+<text x="160" y="112" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="34" font-weight="600" fill="#fff" fill-opacity=".9" text-anchor="middle">.${file.ext.toUpperCase()}</text>
+</svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 export async function demoSearchSites(query: string): Promise<SiteRef[]> {
   await sleep(250);
   const q = query.trim().toLowerCase();
@@ -320,4 +374,54 @@ export async function demoScanVersions(files: SpFile[], onProgress?: (d: number,
 
 export async function demoCleanVersions(files: SpFile[], onProgress?: (d: number, t: number) => void): Promise<BulkResult> {
   return demoDeleteFiles(files, true, onProgress);
+}
+
+/* ----------------------------------------------------- previews, retention */
+
+export async function demoThumbnails(files: SpFile[]): Promise<Map<string, string>> {
+  await sleep(120);
+  return new Map(files.map((f) => [f.id, demoThumbnail(f)]));
+}
+
+/** Contracts are records (cannot be deleted), invoices are retained (deletable, but kept for 10 years). */
+export async function demoRetentionLabels(files: SpFile[]): Promise<Map<string, RetentionInfo>> {
+  await sleep(250);
+  const out = new Map<string, RetentionInfo>();
+  for (const f of files) {
+    if (/^vertrag/i.test(f.name)) out.set(f.id, { name: "Verträge – 10 Jahre (Datensatz)", deleteAllowed: false, retains: true });
+    else if (/^rechnung/i.test(f.name)) out.set(f.id, { name: "Rechnungen – 10 Jahre", deleteAllowed: true, retains: true });
+  }
+  return out;
+}
+
+export async function demoPreservationHold(site: SiteRef): Promise<{ bytes: number; files: number } | null> {
+  await sleep(400);
+  if (site.id === "demo-gf") return null;
+  const quota = demoQuota(site);
+  return { bytes: Math.round(quota.used * 0.021), files: 180 + (site.id.length * 37) % 400 };
+}
+
+export async function demoArchiveSite(): Promise<void> {
+  await sleep(700);
+}
+
+/* ------------------------------------------------- approvals (simulated) */
+
+const demoApprovals = new Map<string, number>();
+let approvalCounter = 0;
+
+export async function demoCreateApproval(): Promise<string> {
+  await sleep(300);
+  const id = `demo-approval-${approvalCounter}`;
+  demoApprovals.set(id, approvalCounter++);
+  return id;
+}
+
+/** Every third owner approves, the next one rejects, the rest has not answered yet. */
+export async function demoGetApproval(id: string): Promise<{ state: string; result?: string }> {
+  await sleep(150);
+  const n = demoApprovals.get(id) ?? 2;
+  if (n % 3 === 0) return { state: "completed", result: "Approved" };
+  if (n % 3 === 1) return { state: "completed", result: "Rejected" };
+  return { state: "pending" };
 }

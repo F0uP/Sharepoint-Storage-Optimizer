@@ -212,11 +212,13 @@ test("owners are notified and version limits are set", async ({ page }) => {
   await boxes.nth(0).click();
   await boxes.nth(1).click();
   await page.getByRole("button", { name: "Weitere" }).click();
-  await page.getByRole("menuitem", { name: "Besitzer benachrichtigen" }).click();
-  const dialog = page.getByRole("dialog", { name: "Besitzer benachrichtigen" });
+  await page.getByRole("menuitem", { name: "Besitzer fragen" }).click();
+  const dialog = page.getByRole("dialog", { name: "Besitzer fragen" });
   await expect(dialog.getByText(/@contoso\.com/).first()).toBeVisible();
-  await dialog.getByRole("button", { name: /Mails? senden/ }).click();
-  await expect(page.getByText(/Mails? verschickt/)).toBeVisible();
+  await dialog.getByRole("radio", { name: /E-Mail/ }).click();
+  await expect(dialog.getByLabel("Nachricht für die E-Mail")).toBeVisible();
+  await dialog.getByRole("button", { name: /Personen? fragen/ }).click();
+  await expect(page.getByText(/Besitzer gefragt/)).toBeVisible();
 
   await page.getByRole("button", { name: "Optimierungen" }).first().click();
   await page.getByRole("button", { name: /Versionsverlauf/ }).click();

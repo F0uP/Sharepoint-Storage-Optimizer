@@ -11,7 +11,8 @@ import { formatNumber } from "@/lib/format";
 import { useApp } from "@/lib/store";
 import type { LibraryVersionSetting } from "@/lib/types";
 
-const LIMITS = [500, 100, 50, 20, 10];
+/** SharePoint Online accepts 100 to 50,000 major versions. */
+const LIMITS = [500, 300, 200, 100];
 
 function current(s: LibraryVersionSetting) {
   if (!s.enabled) return "Versionierung aus";
@@ -57,8 +58,8 @@ export function VersionLimitsCard() {
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-medium">Versionslimit je Bibliothek</h3>
           <p className="mt-0.5 text-sm text-pretty text-muted-foreground">
-            Verhindert, dass der Speicher nach dem Bereinigen wieder wächst. SharePoint behält standardmäßig 500 Versionen pro Datei;
-            das Limit gilt für neue Versionen.
+            Verhindert, dass der Speicher nach dem Bereinigen wieder wächst. SharePoint behält standardmäßig 500 Versionen pro Datei,
+            das Minimum sind 100. Das Limit gilt für neue Versionen – vorhandene alte Versionen oben mit „Versionen löschen“ entfernen.
           </p>
         </div>
         {!settings && (

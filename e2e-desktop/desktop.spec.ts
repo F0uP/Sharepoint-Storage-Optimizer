@@ -138,6 +138,6 @@ test("compresses videos and shows the desktop settings", async () => {
   await page.getByRole("dialog").getByRole("combobox").fill("Einstellungen");
   await page.getByRole("dialog").getByRole("option", { name: "Einstellungen" }).click();
   await page.getByRole("tab", { name: "Desktop" }).click();
-  await expect(page.getByText("Im Hintergrund weiterlaufen")).toBeVisible();
+  await expect(page.getByText("Im Hintergrund weiterlaufen", { exact: true })).toBeVisible();
   await expect(page.getByText(/^Version \d+\.\d+\.\d+/)).toBeVisible();
 });

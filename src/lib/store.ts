@@ -4,7 +4,7 @@ import { addEntry, saveHistory, type HistoryEntry } from "./history";
 import type { Snapshot } from "./trend";
 import type { AiResult, FileCategory, Quota, ScanProgress, ScanResult, SiteRef, SpFile } from "./types";
 
-export type View = "overview" | "files" | "optimize" | "ai" | "rules" | "history";
+export type View = "overview" | "files" | "optimize" | "ai" | "rules" | "reviews" | "history";
 export type Mode = "live" | "demo";
 /** pre-set filter when jumping from the overview into another view */
 export type ViewPreset = { category?: FileCategory; insight?: string; query?: string };

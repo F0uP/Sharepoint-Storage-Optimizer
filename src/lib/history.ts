@@ -27,7 +27,10 @@ export interface HistoryEntry {
 }
 
 const MAX_ENTRIES = 100;
+/** files kept for undo (recycle bin deletes) */
 const MAX_FILES = 5000;
+/** files kept for display only (everything that cannot be undone) */
+const MAX_DISPLAY_FILES = 20;
 /** SharePoint keeps deleted items 93 days (both recycle bin stages together). */
 const RECYCLE_DAYS = 93;
 
@@ -44,16 +47,18 @@ export function createEntry(
     id: `${at.getTime().toString(36)}-${(counter++).toString(36)}`,
     at: at.toISOString(),
     kind,
-    files: files.slice(0, MAX_FILES),
+    files: files.slice(0, (kind === "delete" || kind === "backup") && !extra.permanent ? MAX_FILES : MAX_DISPLAY_FILES),
     fileCount: files.length,
     bytes,
     ...extra,
   };
 }
 
-/** Newest first, capped. */
-export function addEntry(entries: HistoryEntry[], entry: HistoryEntry): HistoryEntry[] {
-  return [entry, ...entries].slice(0, MAX_ENTRIES);
+/** Newest first, capped; entries that can no longer be undone keep only a few files for display. */
+export function addEntry(entries: HistoryEntry[], entry: HistoryEntry, now = Date.now()): HistoryEntry[] {
+  return [entry, ...entries].slice(0, MAX_ENTRIES).map((e) =>
+    e.files.length > MAX_DISPLAY_FILES && !restorableFiles(e, now).length ? { ...e, files: e.files.slice(0, MAX_DISPLAY_FILES) } : e,
+  );
 }
 
 export function restorableFiles(entry: HistoryEntry, now = Date.now()): SpFile[] {

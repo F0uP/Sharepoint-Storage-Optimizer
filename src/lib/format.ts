@@ -12,6 +12,14 @@ export function formatBytes(bytes: number, digits?: number): string {
 }
 
 const numberFormat = new Intl.NumberFormat("de-DE");
+const currency0 = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+const currency2 = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** "1.540 €" – cents only for small amounts */
+export function formatCurrency(value: number): string {
+  return Math.abs(value) < 100 ? currency2.format(value) : currency0.format(value);
+}
+
 export function formatNumber(n: number): string {
   return numberFormat.format(n);
 }
