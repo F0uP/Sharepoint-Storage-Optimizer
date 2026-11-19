@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 import { desktopBridge, type UpdateStatus } from "@/lib/desktop";
 import { formatBytes, formatPercent } from "@/lib/format";
-import { getMsal, isMsalConfigured } from "@/lib/msal";
+import { hasLiveSession } from "@/lib/auth";
 import { useSettings } from "@/lib/settings";
 import { getSource } from "@/lib/source";
 import { useApp } from "@/lib/store";
@@ -16,10 +16,7 @@ import { loadWatchedSites, recordSnapshot } from "@/lib/trend";
  */
 export async function checkWatchedQuotas() {
   const bridge = desktopBridge();
-  if (!bridge || !isMsalConfigured()) return;
-  const msal = getMsal();
-  await msal.initialize();
-  if (!msal.getAllAccounts().length) return;
+  if (!bridge || !(await hasLiveSession())) return;
   const sites = await loadWatchedSites();
   if (!sites.length) return;
 

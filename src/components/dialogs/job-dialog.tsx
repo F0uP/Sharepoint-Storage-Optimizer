@@ -9,8 +9,10 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { isAppAuth } from "@/lib/auth";
 import { formatDate, formatRelative } from "@/lib/format";
 import { JOB_MODE_LABEL, nextRunAfter, runJob, useJobs, type CleanupJob, type JobMode, type JobSchedule } from "@/lib/jobs";
+import { useApp } from "@/lib/store";
 
 export function JobDialog({ job, onClose }: { job: CleanupJob; onClose(): void }) {
   const save = useJobs((s) => s.save);
@@ -21,6 +23,7 @@ export function JobDialog({ job, onClose }: { job: CleanupJob; onClose(): void }
   const [running, setRunning] = useState(false);
   const runs = stored?.runs ?? [];
   const patch = (p: Partial<CleanupJob>) => setDraft((d) => ({ ...d, ...p }));
+  const appAccess = useApp((s) => s.mode) === "live" && isAppAuth();
 
   function persist() {
     const scheduleChanged = draft.schedule !== stored?.schedule;
@@ -104,7 +107,9 @@ export function JobDialog({ job, onClose }: { job: CleanupJob; onClose(): void }
                   ? "Meldet nur, was die Regel findet – ideal zum Ausprobieren."
                   : draft.mode === "recycle"
                     ? "Verschiebt die Treffer in den Papierkorb; im Verlauf rückgängig zu machen."
-                    : "Startet eine Freigabe in Teams; zugestimmte Dateien werden danach gelöscht."}
+                    : appAccess
+                      ? "Fragt die Besitzer per E-Mail; ihre Antworten trägst du unter „Freigaben“ ein."
+                      : "Startet eine Freigabe in Teams; zugestimmte Dateien werden danach gelöscht."}
               </FieldDescription>
             </Field>
             <Field orientation="horizontal">

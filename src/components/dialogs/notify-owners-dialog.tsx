@@ -13,10 +13,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { errorMessage } from "@/lib/actions";
+import { appMailSender, isAppAuth } from "@/lib/auth";
 import { formatBytes, formatNumber } from "@/lib/format";
 import { DEFAULT_OWNER_MESSAGE, groupByOwner } from "@/lib/notify";
 import { startReview } from "@/lib/reviews";
 import { useApp } from "@/lib/store";
+import { openSettings } from "../settings-dialog";
 import type { SpFile } from "@/lib/types";
 
 interface Props {
@@ -38,8 +40,11 @@ type Channel = "teams" | "mail";
 /** Asks the owners of the selected files for a decision – in Teams (Approvals) or by mail. */
 export function NotifyOwnersDialog({ open, onOpenChange, files }: Props) {
   const mode = useApp((s) => s.mode);
+  // app access: no signed-in user, so no Teams approvals – owners are asked from the configured mailbox
+  const appAccess = mode === "live" && isAppAuth();
+  const sender = appAccess ? appMailSender() : "";
   const { groups, unknown } = useMemo(() => groupByOwner(files), [files]);
-  const [channel, setChannel] = useState<Channel>("teams");
+  const [channel, setChannel] = useState<Channel>(appAccess ? "mail" : "teams");
   const [message, setMessage] = useState(DEFAULT_OWNER_MESSAGE);
   const [days, setDays] = useState("14");
   const [onTimeout, setOnTimeout] = useState<"delete" | "keep">("delete");
@@ -85,7 +90,7 @@ export function NotifyOwnersDialog({ open, onOpenChange, files }: Props) {
             className="w-full"
             aria-label="Kanal"
           >
-            <ToggleGroupItem value="teams" className="flex-1">
+            <ToggleGroupItem value="teams" className="flex-1" disabled={appAccess}>
               <UsersIcon /> Freigabe in Teams
             </ToggleGroupItem>
             <ToggleGroupItem value="mail" className="flex-1">
@@ -95,8 +100,18 @@ export function NotifyOwnersDialog({ open, onOpenChange, files }: Props) {
           <p className="-mt-2 text-xs text-pretty text-muted-foreground">
             {channel === "teams"
               ? "Erscheint in der Teams-App „Genehmigungen“ mit „Zustimmen“ und „Ablehnen“ – die App liest die Antworten automatisch aus."
-              : "Mail aus deinem Postfach mit Dateiliste und Links. Antworten trägst du unter „Freigaben“ ein."}
+              : appAccess
+                ? `Mail von ${sender || "–"} mit Dateiliste und Links. Antworten trägst du unter „Freigaben“ ein. Teams-Freigaben gibt es nur mit Benutzeranmeldung.`
+                : "Mail aus deinem Postfach mit Dateiliste und Links. Antworten trägst du unter „Freigaben“ ein."}
           </p>
+          {appAccess && !sender && (
+            <p className="-mt-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-pretty">
+              Im App-Zugriff gibt es kein eigenes Postfach.{" "}
+              <button type="button" className="font-medium underline underline-offset-4" onClick={() => openSettings("microsoft")}>
+                Absender-Postfach festlegen
+              </button>
+            </p>
+          )}
 
           <div className="max-h-48 divide-y overflow-y-auto rounded-lg border">
             {groups.map((g) => (
@@ -173,7 +188,7 @@ export function NotifyOwnersDialog({ open, onOpenChange, files }: Props) {
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
             Abbrechen
           </Button>
-          <Button onClick={send} disabled={busy || !groups.length || (channel === "mail" && !message.trim())}>
+          <Button onClick={send} disabled={busy || !groups.length || (channel === "mail" && !message.trim()) || (appAccess && !sender)}>
             {busy ? <Spinner /> : <SendIcon />}
             {groups.length === 1 ? "1 Person fragen" : `${formatNumber(groups.length)} Personen fragen`}
           </Button>

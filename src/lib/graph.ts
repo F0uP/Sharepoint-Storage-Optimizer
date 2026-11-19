@@ -1,7 +1,8 @@
 import { Client } from "@microsoft/microsoft-graph-client";
 import type { Drive, DriveItem, Site } from "@microsoft/microsoft-graph-types";
 import { categorize, getExtension } from "./file-types";
-import { APPROVAL_SCOPES, ARCHIVE_SCOPES, GRAPH_SCOPES, getAccessToken, MAIL_SCOPES, sharePointScopes } from "./msal";
+import { appMailSender, CERTIFICATE_REQUIRED, explainSharePointError, getToken, hasCertificate, isAppAuth } from "./auth";
+import { APPROVAL_SCOPES, ARCHIVE_SCOPES, GRAPH_SCOPES, MAIL_SCOPES, sharePointScopes } from "./msal";
 import { leafNameFilter, matchRecycleItems, type RecycleItem } from "./recycle-bin";
 import type {
   BulkResult,
@@ -21,7 +22,7 @@ let client: Client | null = null;
 /** Graph client with the SDK's default middleware chain (incl. retry on 429/503 with Retry-After). */
 function graph(): Client {
   client ??= Client.initWithMiddleware({
-    authProvider: { getAccessToken: () => getAccessToken(GRAPH_SCOPES) },
+    authProvider: { getAccessToken: () => getToken(GRAPH_SCOPES) },
   });
   return client;
 }
@@ -301,14 +302,18 @@ async function sharePointRest(
   method: "GET" | "POST" | "MERGE" = "POST",
   body?: Record<string, unknown>,
 ) {
-  const token = await getAccessToken(sharePointScopes(siteUrl));
+  // SharePoint rejects app-only tokens that were requested with a client secret
+  if (isAppAuth() && !hasCertificate()) throw new Error(CERTIFICATE_REQUIRED);
+  const token = await getToken(sharePointScopes(siteUrl));
   const res = await fetch("/api/sharepoint", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ siteUrl, path, method, body }),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error ?? `SharePoint-Fehler (HTTP ${res.status})`);
+  if (!res.ok) {
+    throw new Error(explainSharePointError(data?.error ?? `SharePoint-Fehler (HTTP ${res.status})`));
+  }
   return data;
 }
 
@@ -469,13 +474,21 @@ export async function createUploadSession(file: SpFile): Promise<string> {
 
 /* --------------------------------------------------------------- mail */
 
-/** Sends one mail per owner from the signed-in user's mailbox (asks for Mail.Send consent once). */
+/**
+ * Sends one mail per owner – from the signed-in user's mailbox (asks for Mail.Send consent once) or,
+ * with app access, from the sender mailbox configured in the settings.
+ */
 export async function sendMails(mails: OwnerMail[], onProgress?: (done: number, total: number) => void): Promise<BulkResult> {
-  const token = await getAccessToken(MAIL_SCOPES);
+  const sender = isAppAuth() ? appMailSender() : "me";
+  if (!sender) {
+    throw new Error("Im App-Zugriff gibt es kein eigenes Postfach – lege unter Einstellungen → Microsoft 365 ein Absender-Postfach fest.");
+  }
+  const endpoint = `https://graph.microsoft.com/v1.0/${sender === "me" ? "me" : `users/${encodeURIComponent(sender)}`}/sendMail`;
+  const token = await getToken(MAIL_SCOPES);
   const result: BulkResult = { succeeded: [], failed: [] };
   for (const [i, mail] of mails.entries()) {
     try {
-      const res = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -563,7 +576,7 @@ export async function getPreservationHold(site: SiteRef): Promise<{ bytes: numbe
 const GRAPH_BETA = "https://graph.microsoft.com/beta";
 
 async function betaRequest(url: string, scopes: string[], init: RequestInit = {}): Promise<Response> {
-  const token = await getAccessToken(scopes);
+  const token = await getToken(scopes);
   return fetch(url.startsWith("http") ? url : `${GRAPH_BETA}${url}`, {
     ...init,
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...init.headers },
@@ -580,7 +593,11 @@ export async function archiveSite(site: SiteRef): Promise<void> {
   const res = await betaRequest(`/sites/${site.id}/archive`, ARCHIVE_SCOPES, { method: "POST" });
   if (res.ok) return;
   if (res.status === 401 || res.status === 403) {
-    throw new Error("Archivieren ist nur mit der Rolle SharePoint-Administrator und aktivem Microsoft 365 Archive möglich.");
+    throw new Error(
+      isAppAuth()
+        ? "Archivieren braucht die Anwendungsberechtigung Sites.Archive.All und aktives Microsoft 365 Archive."
+        : "Archivieren ist nur mit der Rolle SharePoint-Administrator und aktivem Microsoft 365 Archive möglich.",
+    );
   }
   throw await betaError(res, "Archivieren fehlgeschlagen");
 }
@@ -595,7 +612,11 @@ export interface ApprovalRequest {
  * Creates an approval in the Teams app "Approvals" (Graph beta). The id of the new item is delivered
  * through a long-running operation; if that is not readable, the item is found by its unique title.
  */
+const APPROVALS_NEED_USER = "Teams-Freigaben gibt es nur mit Benutzeranmeldung – im App-Zugriff werden Besitzer per E-Mail gefragt.";
+
 export async function createApproval({ title, description, approver }: ApprovalRequest): Promise<string> {
+  // the Approvals API has no application permissions
+  if (isAppAuth()) throw new Error(APPROVALS_NEED_USER);
   const res = await betaRequest("/solutions/approval/approvalItems", APPROVAL_SCOPES, {
     method: "POST",
     body: JSON.stringify({
@@ -629,6 +650,7 @@ export async function createApproval({ title, description, approver }: ApprovalR
 }
 
 export async function getApproval(id: string): Promise<{ state: string; result?: string }> {
+  if (isAppAuth()) throw new Error(APPROVALS_NEED_USER);
   const res = await betaRequest(`/solutions/approval/approvalItems/${id}?$select=state,result`, APPROVAL_SCOPES);
   if (!res.ok) throw await betaError(res, "Freigabe konnte nicht gelesen werden");
   return (await res.json()) as { state: string; result?: string };

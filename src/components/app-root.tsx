@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { MsalProvider, useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
 import { Spinner } from "@/components/ui/spinner";
+import { appSession, configureAuth, isAppAuth, isAuthConfigured } from "@/lib/auth";
 import { configureMsal, getMsal, isMsalConfigured } from "@/lib/msal";
-import { authConfig, loadSettings, useSettings } from "@/lib/settings";
+import { appCredentials, authConfig, loadSettings, useSettings } from "@/lib/settings";
 import { useApp } from "@/lib/store";
 import { CommandMenu } from "./command-menu";
 import { SettingsDialog } from "./settings-dialog";
@@ -62,7 +63,11 @@ export function AppRoot() {
 
   useEffect(() => {
     loadSettings().then(() => {
-      configureMsal(authConfig(useSettings.getState()));
+      const snapshot = useSettings.getState();
+      configureMsal(authConfig(snapshot));
+      configureAuth(appCredentials(snapshot));
+      // app access needs no sign-in: reconnect right away if it was connected before
+      if (isAppAuth() && isAuthConfigured() && appSession() && !useApp.getState().mode) useApp.getState().setMode("live");
       setReady(true);
     });
   }, []);
@@ -74,7 +79,7 @@ export function AppRoot() {
       </div>
     );
   }
-  if (!isMsalConfigured()) return <Shell />;
+  if (isAppAuth() || !isMsalConfigured()) return <Shell />;
   return (
     <MsalProvider instance={getMsal()}>
       <SessionRestorer />

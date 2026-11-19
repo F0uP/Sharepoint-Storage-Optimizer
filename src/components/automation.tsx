@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { desktopBridge } from "@/lib/desktop";
 import { runDueJobs } from "@/lib/jobs";
-import { getMsal, isMsalConfigured } from "@/lib/msal";
+import { hasLiveSession } from "@/lib/auth";
 import { syncReviews } from "@/lib/reviews";
 import { useApp } from "@/lib/store";
 
@@ -12,12 +12,7 @@ const INTERVAL = 15 * 60_000;
 async function tick() {
   const { mode } = useApp.getState();
   if (!mode) return;
-  if (mode === "live") {
-    if (!isMsalConfigured()) return;
-    const msal = getMsal();
-    await msal.initialize();
-    if (!msal.getAllAccounts().length) return;
-  }
+  if (mode === "live" && !(await hasLiveSession())) return;
   await syncReviews({ quiet: true }).catch(() => {});
   await runDueJobs().catch(() => {});
 }

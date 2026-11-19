@@ -23,7 +23,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getMsal, isMsalConfigured, signOut } from "@/lib/msal";
+import { currentIdentity, isAppAuth, signOutCurrent } from "@/lib/auth";
 import { openSettings } from "./settings-dialog";
 import { requestTour, showWelcome } from "@/lib/onboarding";
 import { useApp } from "@/lib/store";
@@ -32,9 +32,9 @@ import { errorMessage } from "@/lib/actions";
 
 export function useCurrentUser() {
   const mode = useApp((s) => s.mode);
-  if (mode === "live" && isMsalConfigured()) {
-    const account = getMsal().getActiveAccount() ?? getMsal().getAllAccounts()[0];
-    return { name: account?.name ?? account?.username ?? "Angemeldet", email: account?.username ?? "" };
+  if (mode === "live") {
+    const { name, detail } = currentIdentity();
+    return { name, email: detail };
   }
   return { name: "Demo-Modus", email: "Beispieldaten" };
 }
@@ -56,7 +56,7 @@ export function UserMenu({ compact, className }: { compact?: boolean; className?
 
   async function logout() {
     try {
-      if (mode === "live") await signOut();
+      if (mode === "live") await signOutCurrent();
     } catch (e) {
       toast.error("Abmelden fehlgeschlagen", { description: errorMessage(e) });
       return;
@@ -115,7 +115,7 @@ export function UserMenu({ compact, className }: { compact?: boolean; className?
           </DropdownMenuItem>
         )}
         <DropdownMenuItem onSelect={logout}>
-          <LogOutIcon /> {mode === "demo" ? "Demo beenden" : "Abmelden"}
+          <LogOutIcon /> {mode === "demo" ? "Demo beenden" : isAppAuth() ? "Trennen" : "Abmelden"}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

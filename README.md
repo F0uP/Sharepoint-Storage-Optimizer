@@ -104,8 +104,22 @@ Danach **Demo ansehen** oder **Microsoft 365 verbinden** – die Einrichtung pas
 
 ### Microsoft 365 verbinden
 
-Die App braucht eine eigene App-Registrierung in Microsoft Entra ID (einmalig, ca. 3 Minuten). Der Dialog
-**Einstellungen → Microsoft 365** zeigt die passende Umleitungs-URI zum Kopieren und führt durch die Schritte:
+Die App braucht eine eigene App-Registrierung in Microsoft Entra ID (einmalig, ca. 3 Minuten). Unter
+**Einstellungen → Microsoft 365** gibt es zwei Zugriffsarten:
+
+| Zugriffsart | Anmeldung | Rechte | Admin nötig? |
+| --- | --- | --- | --- |
+| **Benutzeranmeldung** | jede Person mit ihrem Microsoft-Konto | was die Person auch in SharePoint darf | nur, wenn der Tenant Benutzern das Zustimmen verbietet – dann einmalig |
+| **App-Zugriff** | keine – Client-Secret und/oder Zertifikat | alle Sites des Tenants | einmalig für die Administratorzustimmung |
+
+> [!IMPORTANT]
+> Ein Client-Secret ersetzt keine Administratorzustimmung. Microsoft verlangt für Anwendungsberechtigungen immer, dass ein
+> Administrator (Globaler Administrator oder Administrator für privilegierte Rollen) **einmal** zustimmt. Danach braucht
+> niemand mehr ein Admin-Konto – im App-Zugriff auch keine Anmeldung.
+
+#### Benutzeranmeldung
+
+Der Dialog zeigt die passende Umleitungs-URI zum Kopieren und führt durch die Schritte:
 
 1. [Entra Admin Center](https://entra.microsoft.com) → **App-Registrierungen** → **Neue Registrierung**
 2. Plattform **Single-Page-Anwendung** mit der Umleitungs-URI aus dem Dialog hinzufügen
@@ -135,9 +149,37 @@ Die App braucht eine eigene App-Registrierung in Microsoft Entra ID (einmalig, c
 | Microsoft Graph | `Sites.Archive.All` | *optional:* inaktive Sites archivieren – nur mit Rolle SharePoint-Administrator ([Beta-API](https://learn.microsoft.com/graph/api/site-archive?view=graph-rest-beta)) |
 
 Optionale Berechtigungen fragt die App erst an, wenn die Funktion zum ersten Mal genutzt wird. Keine davon erfordert
-zwingend Admin-Zustimmung; je nach Tenant-Richtlinie kann sie nötig sein. Beta-Schnittstellen kann Microsoft noch ändern –
-für das Archivieren zeigt die App deshalb zusätzlich den passenden PowerShell-Befehl. Für das Leeren des
-endgültigen Papierkorbs (Stufe 2) sind Websitesammlungs-Adminrechte erforderlich.
+zwingend Admin-Zustimmung; je nach Tenant-Richtlinie kann sie nötig sein. Scheitert die Anmeldung daran, zeigt die App einen
+Zustimmungslink, den man an einen Administrator weitergibt. Beta-Schnittstellen kann Microsoft noch ändern – für das
+Archivieren zeigt die App deshalb zusätzlich den passenden PowerShell-Befehl. Für das Leeren des endgültigen Papierkorbs
+(Stufe 2) sind Websitesammlungs-Adminrechte erforderlich.
+
+</details>
+
+#### App-Zugriff ohne Anmeldung
+
+1. In der App-Registrierung unter **API-Berechtigungen** die **Anwendungsberechtigungen** aus der Tabelle unten hinzufügen
+2. Einmalig **Administratorzustimmung erteilen**
+3. **Zertifikate & Geheimnisse** → neuen geheimen Clientschlüssel anlegen und dessen *Wert* (nicht die Geheimnis-ID) in der App
+   eintragen
+4. Für Versionen, Papierkorb und Versionslimits zusätzlich in der App **Zertifikat erzeugen** und die `.cer`-Datei in Entra
+   hochladen – SharePoint REST lehnt App-Tokens ab, die mit einem Client-Secret ausgestellt wurden
+5. **Prüfen** zeigt sofort, welche Funktionen mit den erteilten Rechten laufen
+
+<details>
+<summary><b>Berechtigungen</b> (Anwendungsberechtigungen)</summary>
+
+| API | Berechtigung | Wofür |
+| --- | --- | --- |
+| Microsoft Graph | `Sites.Read.All` | Sites finden, Bibliotheken scannen |
+| Microsoft Graph | `Files.ReadWrite.All` | Dateien löschen, komprimierte Fassungen hochladen |
+| SharePoint | `Sites.FullControl.All` | *optional, nur mit Zertifikat:* Versionen, Versionslimits, Papierkorb, Wiederherstellen |
+| Microsoft Graph | `Mail.Send` | *optional:* Besitzer per Mail fragen – aus dem in den Einstellungen gewählten Postfach |
+| Microsoft Graph | `Sites.Archive.All` | *optional:* inaktive Sites archivieren ([Beta-API](https://learn.microsoft.com/graph/api/site-archive?view=graph-rest-beta)) |
+
+Freigaben in Teams gibt es nur mit Benutzeranmeldung, die Approvals-API kennt keine Anwendungsberechtigungen – im
+App-Zugriff fragt die App Besitzer per Mail. Das Token holt der App-Server mit dem Client-Credentials-Flow
+(`/api/auth/token`); Secret und privater Schlüssel werden dort nicht gespeichert.
 
 </details>
 
@@ -203,7 +245,10 @@ oben. Mit diesen Repository-Secrets signiert der Workflow automatisch:
 
 ## Sicherheit & Datenschutz
 
-- **Eigene Berechtigungen** – die App arbeitet mit den delegierten Rechten des angemeldeten Benutzers
+- **Klare Berechtigungen** – mit Benutzeranmeldung gelten die delegierten Rechte der Person, im App-Zugriff nur die
+  Anwendungsberechtigungen, denen ein Administrator zugestimmt hat
+- **Zertifikat statt Passwort** – Zertifikate für den App-Zugriff entstehen lokal (WebCrypto); nur der öffentliche Teil geht
+  nach Entra, der private Schlüssel bleibt auf dem Gerät
 - **Umkehrbar** – Löschen landet standardmäßig im Papierkorb; jede Aktion steht im Verlauf
 - **Nur Metadaten an die KI** – Pfad, Name, Größe und Datum, niemals Dateiinhalte
 - **Schlüssel bleiben lokal** – in der Desktop-App verschlüsselt über den Schlüsselspeicher des Betriebssystems
@@ -225,9 +270,11 @@ flowchart LR
   end
   subgraph server["Next.js-Server<br/>lokal oder Docker"]
     proxy["/api/sharepoint"]
+    token["/api/auth/token"]
     ai["/api/ai/*"]
   end
-  ui -- "MSAL-Token" --> graph["Microsoft Graph"]
+  ui -- "MSAL- oder App-Token" --> graph["Microsoft Graph"]
+  ui -. "App-Zugriff" .-> token -- "Client Credentials" --> entra["Entra ID"]
   ui --> proxy -- "Versionen, Papierkorb" --> sp["SharePoint REST"]
   ui --> ai -- "nur Metadaten" --> llm["OpenAI · Gemini"]
   main -. IPC .- ui

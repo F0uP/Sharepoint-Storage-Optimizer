@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { SHAREPOINT_HOST } from "@/lib/entra";
 
 /**
  * Thin proxy for SharePoint REST calls. SharePoint Online does not send CORS headers
  * for arbitrary SPA origins, so version cleanup, version limits, restore and recycle bin calls
- * are forwarded from here. The user's own delegated token is passed through – nothing is stored.
+ * are forwarded from here. The caller's token (user or app) is passed through – nothing is stored.
  */
 
 const BodySchema = z.object({
@@ -13,7 +14,7 @@ const BodySchema = z.object({
   body: z.record(z.string(), z.unknown()).optional(),
 });
 
-const ALLOWED_HOST = /^[a-z0-9-]+\.sharepoint(-mil)?\.(com|us|cn|de)$/i;
+const ALLOWED_HOST = SHAREPOINT_HOST;
 
 /** Updates are only allowed for the version settings of a library. */
 const MERGE_TARGET = /^\/_api\/web\/lists\(guid'[0-9a-f-]{36}'\)$/i;

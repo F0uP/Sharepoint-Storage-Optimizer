@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { create } from "zustand";
 import { toast } from "sonner";
-import { CircleCheckIcon, CopyIcon, ExternalLinkIcon, EyeIcon, EyeOffIcon, LockKeyholeIcon } from "lucide-react";
+import { CircleCheckIcon, EyeIcon, EyeOffIcon, LockKeyholeIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -23,20 +23,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DesktopSettings } from "./desktop-settings";
 import { GeneralSettings } from "./general-settings";
+import { MicrosoftSettings, validateMicrosoft } from "./microsoft-settings";
 import { errorMessage } from "@/lib/actions";
+import { disconnectApp } from "@/lib/auth";
 import { verifyAiProvider } from "@/lib/ai";
 import { AI_PROVIDERS, MODEL_PATTERN, PROVIDER_IDS, type ProviderId } from "@/lib/ai-config";
-import { redirectUri } from "@/lib/msal";
-import {
-  authConfig,
-  desktopBridge,
-  GUID_PATTERN,
-  saveSettings,
-  TENANT_PATTERN,
-  useSettings,
-  type ServerConfig,
-  type Settings,
-} from "@/lib/settings";
+import { authSignature, desktopBridge, saveSettings, useSettings, type ServerConfig, type Settings } from "@/lib/settings";
 
 export type SettingsTab = "microsoft" | "ai" | "general" | "desktop";
 
@@ -47,8 +39,6 @@ export function openSettings(tab: SettingsTab = "microsoft") {
 }
 
 const closeSettings = () => useSettingsDialog.setState({ open: false });
-
-const ENTRA_URL = "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade";
 
 const KEY_FIELD = { openai: "openaiApiKey", gemini: "geminiApiKey" } as const satisfies Record<ProviderId, keyof Settings>;
 const MODEL_FIELD = { openai: "openaiModel", gemini: "geminiModel" } as const satisfies Record<ProviderId, keyof Settings>;
@@ -72,10 +62,10 @@ function SettingsForm({ initialTab }: { initialTab: SettingsTab }) {
   const [draft, setDraft] = useState(saved);
   const [tab, setTab] = useState<SettingsTab>(initialTab);
   const [saving, setSaving] = useState(false);
+  const [attempted, setAttempted] = useState(false);
   const patch: Patch = (p) => setDraft((d) => ({ ...d, ...p }));
 
-  const clientIdInvalid = draft.azureClientId.trim() !== "" && !GUID_PATTERN.test(draft.azureClientId.trim());
-  const tenantInvalid = draft.azureTenantId.trim() !== "" && !TENANT_PATTERN.test(draft.azureTenantId.trim());
+  const microsoftInvalid = Object.keys(validateMicrosoft(draft, { required: true })).length > 0;
   const modelInvalid = PROVIDER_IDS.some((id) => {
     const model = draft[MODEL_FIELD[id]].trim();
     return model !== "" && !MODEL_PATTERN.test(model);
@@ -83,14 +73,16 @@ function SettingsForm({ initialTab }: { initialTab: SettingsTab }) {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (clientIdInvalid || tenantInvalid) return setTab("microsoft");
+    setAttempted(true);
+    if (microsoftInvalid) return setTab("microsoft");
     if (modelInvalid) return setTab("ai");
     setSaving(true);
     try {
-      const before = authConfig({ settings: saved, server });
+      const before = authSignature({ settings: saved, server });
       const next = await saveSettings(draft);
-      const after = authConfig({ settings: next, server });
-      if (before.clientId !== after.clientId || before.tenantId !== after.tenantId) {
+      if (before !== authSignature({ settings: next, server })) {
+        // a changed app access must be connected again
+        if (next.azureAuthMode !== "app" || saved.azureAuthMode !== "app") disconnectApp();
         toast.success("Gespeichert – die Anmeldung wird neu geladen.");
         // MSAL is configured once per page load
         setTimeout(() => window.location.reload(), 700);
@@ -127,7 +119,7 @@ function SettingsForm({ initialTab }: { initialTab: SettingsTab }) {
         {/* only the content scrolls – header, tabs and buttons stay in place */}
         <div className="-mx-4 mt-4 min-h-0 flex-1 overflow-y-auto px-4 pb-1">
           <TabsContent value="microsoft">
-            <MicrosoftSection draft={draft} patch={patch} server={server} clientIdInvalid={clientIdInvalid} tenantInvalid={tenantInvalid} />
+            <MicrosoftSettings draft={draft} patch={patch} server={server} errors={validateMicrosoft(draft, { required: attempted })} />
           </TabsContent>
           <TabsContent value="ai">
             <AiSection draft={draft} patch={patch} server={server} />
@@ -153,120 +145,6 @@ function SettingsForm({ initialTab }: { initialTab: SettingsTab }) {
         </Button>
       </DialogFooter>
     </form>
-  );
-}
-
-function MicrosoftSection({
-  draft,
-  patch,
-  server,
-  clientIdInvalid,
-  tenantInvalid,
-}: {
-  draft: Settings;
-  patch: Patch;
-  server: ServerConfig;
-  clientIdInvalid: boolean;
-  tenantInvalid: boolean;
-}) {
-  const uri = redirectUri();
-  const usesPreset = !draft.azureClientId && Boolean(server.azureClientId);
-  // expanded on first setup; afterwards the user decides (must not collapse while typing)
-  const [guideOpen, setGuideOpen] = useState(!draft.azureClientId && !server.azureClientId);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(uri);
-      toast.success("Umleitungs-URI kopiert");
-    } catch {
-      toast.error("Kopieren nicht möglich");
-    }
-  }
-
-  return (
-    <FieldGroup>
-      <p className="text-sm text-pretty text-muted-foreground">
-        Der Zugriff auf SharePoint läuft über eine eigene App-Registrierung in Microsoft Entra ID. Sie ist einmalig in wenigen
-        Minuten angelegt.
-      </p>
-
-      <Field data-invalid={clientIdInvalid || undefined}>
-        <FieldLabel htmlFor="azure-client-id">Anwendungs-ID (Client-ID)</FieldLabel>
-        <Input
-          id="azure-client-id"
-          value={draft.azureClientId}
-          onChange={(e) => patch({ azureClientId: e.target.value })}
-          placeholder={server.azureClientId || "00000000-0000-0000-0000-000000000000"}
-          aria-invalid={clientIdInvalid || undefined}
-          autoComplete="off"
-          spellCheck={false}
-          className="font-mono text-[13px]"
-        />
-        {clientIdInvalid ? (
-          <FieldError>Die Client-ID ist eine GUID, z. B. 3f2b8c1e-…-9a4d.</FieldError>
-        ) : usesPreset ? (
-          <FieldDescription>Leer – die Vorgabe des Servers wird verwendet.</FieldDescription>
-        ) : null}
-      </Field>
-
-      <Field data-invalid={tenantInvalid || undefined}>
-        <FieldLabel htmlFor="azure-tenant-id">
-          Verzeichnis-ID (Tenant-ID) <span className="font-normal text-muted-foreground">optional</span>
-        </FieldLabel>
-        <Input
-          id="azure-tenant-id"
-          value={draft.azureTenantId}
-          onChange={(e) => patch({ azureTenantId: e.target.value })}
-          placeholder={usesPreset && server.azureTenantId ? server.azureTenantId : "contoso.onmicrosoft.com oder GUID"}
-          aria-invalid={tenantInvalid || undefined}
-          autoComplete="off"
-          spellCheck={false}
-          className="font-mono text-[13px]"
-        />
-        {tenantInvalid ? (
-          <FieldError>Erwartet wird eine GUID oder eine Domain.</FieldError>
-        ) : (
-          <FieldDescription>Leer lassen, wenn die App für mehrere Organisationen registriert ist.</FieldDescription>
-        )}
-      </Field>
-
-      <Field>
-        <FieldLabel htmlFor="redirect-uri">Umleitungs-URI</FieldLabel>
-        <InputGroup>
-          <InputGroupInput id="redirect-uri" value={uri} readOnly className="font-mono text-[13px]" />
-          <InputGroupAddon align="inline-end">
-            <InputGroupButton size="icon-xs" onClick={copy} aria-label="Umleitungs-URI kopieren">
-              <CopyIcon />
-            </InputGroupButton>
-          </InputGroupAddon>
-        </InputGroup>
-        <FieldDescription>In der App-Registrierung unter Plattform „Single-Page-Anwendung“ eintragen.</FieldDescription>
-      </Field>
-
-      <details
-        className="rounded-lg border bg-muted/40 px-4 py-3 text-sm"
-        open={guideOpen}
-        onToggle={(e) => setGuideOpen(e.currentTarget.open)}
-      >
-        <summary className="cursor-pointer font-medium select-none marker:text-muted-foreground">So legst du die App-Registrierung an</summary>
-        <ol className="mt-3 list-decimal space-y-2 pl-5 text-muted-foreground marker:text-xs">
-          <li>Entra Admin Center öffnen → App-Registrierungen → Neue Registrierung.</li>
-          <li>Plattform „Single-Page-Anwendung“ mit der Umleitungs-URI von oben hinzufügen.</li>
-          <li>
-            API-Berechtigungen (delegiert) für Microsoft Graph: <code className="font-mono text-xs text-foreground">User.Read</code>,{" "}
-            <code className="font-mono text-xs text-foreground">Sites.Read.All</code>, <code className="font-mono text-xs text-foreground">Files.ReadWrite.All</code>.
-            Optional: SharePoint <code className="font-mono text-xs text-foreground">AllSites.Manage</code> für Versionen, Papierkorb
-            und Wiederherstellen, Graph <code className="font-mono text-xs text-foreground">Mail.Send</code> zum Benachrichtigen.
-          </li>
-          <li>Anwendungs-ID und Verzeichnis-ID aus der Übersicht hier eintragen.</li>
-        </ol>
-        <Button asChild variant="link" size="sm" className="mt-2 h-auto px-0">
-          <a href={ENTRA_URL} target="_blank" rel="noreferrer">
-            Entra Admin Center öffnen <ExternalLinkIcon />
-          </a>
-        </Button>
-      </details>
-    </FieldGroup>
   );
 }
 

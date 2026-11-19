@@ -20,7 +20,8 @@ export function sanitize(value: unknown): Stored {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Ungültige Einstellungen.");
   const entries = Object.entries(value).filter(
     (entry): entry is [string, string] =>
-      /^[A-Za-z]{1,40}$/.test(entry[0]) && typeof entry[1] === "string" && entry[1].length <= 1000,
+      // up to 16 000 characters: the app access certificate (PEM with key) is the longest value
+      /^[A-Za-z]{1,40}$/.test(entry[0]) && typeof entry[1] === "string" && entry[1].length <= 16_000,
   );
   return Object.fromEntries(entries.slice(0, 40));
 }

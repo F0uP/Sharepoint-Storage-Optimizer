@@ -1,17 +1,27 @@
 import { create } from "zustand";
 import { AI_PROVIDERS, isProviderId, PROVIDER_IDS, type ProviderId } from "./ai-config";
+import type { AppCredentials } from "./auth";
 import { desktopBridge } from "./desktop";
+import { EMAIL_PATTERN, GUID_PATTERN, TENANT_PATTERN } from "./entra";
 import type { AiProviderInfo } from "./types";
 
-export { desktopBridge };
+export { desktopBridge, GUID_PATTERN, TENANT_PATTERN };
 
 /**
  * Everything the user configures in the app itself – no .env file required.
  * Desktop: encrypted with the OS keychain (Electron safeStorage). Browser: localStorage.
  */
 export interface Settings {
+  /** "" = everyone signs in with a Microsoft account, "app" = app access without sign-in */
+  azureAuthMode: "app" | "";
   azureClientId: string;
   azureTenantId: string;
+  /** app access: client secret (value, not the secret ID) */
+  azureClientSecret: string;
+  /** app access: PEM with certificate and private key – needed for SharePoint REST */
+  azureCertificate: string;
+  /** app access: mailbox the owner mails are sent from */
+  mailSender: string;
   aiProvider: ProviderId | "";
   openaiApiKey: string;
   openaiModel: string;
@@ -30,8 +40,12 @@ export interface Settings {
 }
 
 export const EMPTY_SETTINGS: Settings = {
+  azureAuthMode: "",
   azureClientId: "",
   azureTenantId: "",
+  azureClientSecret: "",
+  azureCertificate: "",
+  mailSender: "",
   aiProvider: "",
   openaiApiKey: "",
   openaiModel: "",
@@ -57,10 +71,6 @@ const EMPTY_SERVER: ServerConfig = { azureClientId: "", azureTenantId: "", aiPro
 
 export const STORAGE_KEY = "spo:settings";
 
-export const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** Tenant: GUID or verified domain (contoso.onmicrosoft.com). */
-export const TENANT_PATTERN = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z0-9-]+(\.[a-z0-9-]+)+)$/i;
-
 function validPrice(value: string) {
   const n = Number(value.replace(",", "."));
   return value !== "" && Number.isFinite(n) && n >= 0 && n <= 100;
@@ -68,18 +78,23 @@ function validPrice(value: string) {
 
 export function sanitizeSettings(raw: unknown): Settings {
   const src = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const str = (key: keyof Settings) => {
+  const str = (key: keyof Settings, max = 500) => {
     const value = src[key];
-    return typeof value === "string" ? value.trim().slice(0, 500) : "";
+    return typeof value === "string" ? value.trim().slice(0, max) : "";
   };
+  const certificate = str("azureCertificate", 16_000).replace(/\r\n/g, "\n");
   const provider = str("aiProvider");
   const pick = (key: keyof Settings, allowed: string[], fallback: string) => {
     const value = str(key);
     return allowed.includes(value) ? value : fallback;
   };
   return {
+    azureAuthMode: str("azureAuthMode") === "app" ? "app" : "",
     azureClientId: str("azureClientId"),
     azureTenantId: str("azureTenantId"),
+    azureClientSecret: str("azureClientSecret"),
+    azureCertificate: certificate.includes("-----BEGIN") ? certificate : "",
+    mailSender: EMAIL_PATTERN.test(str("mailSender")) ? str("mailSender") : "",
     aiProvider: isProviderId(provider) ? provider : "",
     openaiApiKey: str("openaiApiKey"),
     openaiModel: str("openaiModel"),
@@ -157,6 +172,23 @@ export function authConfig({ settings, server }: Snapshot): { clientId: string; 
   return settings.azureClientId
     ? { clientId: settings.azureClientId, tenantId: settings.azureTenantId }
     : { clientId: server.azureClientId, tenantId: server.azureTenantId };
+}
+
+/** Credentials for the app access – null when everyone signs in with a Microsoft account. */
+export function appCredentials({ settings }: Pick<SettingsState, "settings">): AppCredentials | null {
+  if (settings.azureAuthMode !== "app") return null;
+  return {
+    clientId: settings.azureClientId,
+    tenantId: settings.azureTenantId,
+    clientSecret: settings.azureClientSecret,
+    certificate: settings.azureCertificate,
+    mailSender: settings.mailSender,
+  };
+}
+
+/** Changes to these values need a reload, because the sign-in is set up once per page load. */
+export function authSignature(snapshot: Snapshot): string {
+  return JSON.stringify([authConfig(snapshot), appCredentials(snapshot)]);
 }
 
 export function apiKeyOf(settings: Settings, id: ProviderId): string {

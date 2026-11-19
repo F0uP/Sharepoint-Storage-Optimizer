@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { toast } from "sonner";
+import { isAppAuth } from "./auth";
 import { generateDemoScan } from "./demo";
 import { desktopBridge } from "./desktop";
 import { formatBytes, formatNumber } from "./format";
@@ -136,7 +137,8 @@ export async function runJob(job: CleanupJob): Promise<JobRun> {
         // review rounds belong to the site that is open – only start one there
         if (app.site?.id !== job.site.id) throw new Error("Für „Besitzer fragen“ muss die Site geöffnet sein.");
         const round = await startReview(groupByOwner(candidates).groups, {
-          channel: "teams",
+          // Teams approvals need a signed-in user – with app access the owners get a mail
+          channel: app.mode === "live" && isAppAuth() ? "mail" : "teams",
           days: 14,
           onTimeout: "delete",
           message: "Ein automatischer Aufräum-Job hat diese Dateien gefunden. Werden sie noch gebraucht?",

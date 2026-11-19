@@ -22,7 +22,10 @@ export function isMsalConfigured(): boolean {
   return config.clientId.length > 0;
 }
 
-/** Delegated Microsoft Graph permissions – none of them require admin consent. */
+/**
+ * Delegated Microsoft Graph permissions. None of them needs admin consent by default – unless the tenant
+ * blocks user consent, then an admin consents once (see adminConsentUrl).
+ */
 export const GRAPH_SCOPES = ["User.Read", "Sites.Read.All", "Files.ReadWrite.All"];
 
 /** Only requested when owners are notified (incremental consent). */
@@ -55,6 +58,19 @@ export function getMsal(): PublicClientApplication {
 /** Redirect URI to register in Entra ID (platform "Single-page application"). */
 export function redirectUri(): string {
   return `${window.location.origin}/auth/redirect`;
+}
+
+/**
+ * Link for an administrator: consents once for the whole organization to all permissions configured in the
+ * app registration. Afterwards everyone signs in without admin rights.
+ */
+export function adminConsentUrl({ clientId, tenantId }: AuthConfig = config): string {
+  const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri() });
+  return `https://login.microsoftonline.com/${encodeURIComponent(tenantId || "organizations")}/adminconsent?${params}`;
+}
+
+export function currentAuthConfig(): AuthConfig {
+  return config;
 }
 
 export async function signIn() {

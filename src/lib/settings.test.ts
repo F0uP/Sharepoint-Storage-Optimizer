@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DesktopBridge } from "./desktop";
 import {
   aiProviders,
+  appCredentials,
   authConfig,
+  authSignature,
   EMPTY_SETTINGS,
   loadSettings,
   sanitizeSettings,
@@ -35,6 +37,43 @@ describe("sanitizeSettings", () => {
       azureClientId: "abc",
     });
     expect(sanitizeSettings(null)).toEqual(EMPTY_SETTINGS);
+  });
+});
+
+describe("app access", () => {
+  const pem = "-----BEGIN CERTIFICATE-----\r\nMIIB\r\n-----END CERTIFICATE-----";
+
+  it("keeps the certificate (long, with normalized line endings) and validates the sender", () => {
+    const long = `${pem}\n${"A".repeat(3000)}`;
+    expect(sanitizeSettings({ azureAuthMode: "app", azureCertificate: long, mailSender: "speicher@contoso.com" })).toMatchObject({
+      azureAuthMode: "app",
+      azureCertificate: long.replace(/\r\n/g, "\n"),
+      mailSender: "speicher@contoso.com",
+    });
+    expect(sanitizeSettings({ azureAuthMode: "admin", azureCertificate: "no pem", mailSender: "nobody" })).toMatchObject({
+      azureAuthMode: "",
+      azureCertificate: "",
+      mailSender: "",
+    });
+  });
+
+  it("only yields credentials in app mode", () => {
+    const settings = { ...EMPTY_SETTINGS, azureClientId: "id", azureTenantId: "contoso.com", azureClientSecret: "s" };
+    expect(appCredentials({ settings })).toBeNull();
+    expect(appCredentials({ settings: { ...settings, azureAuthMode: "app" } })).toEqual({
+      clientId: "id",
+      tenantId: "contoso.com",
+      clientSecret: "s",
+      certificate: "",
+      mailSender: "",
+    });
+  });
+
+  it("changes its signature when anything that affects the sign-in changes", () => {
+    const base = { settings: { ...EMPTY_SETTINGS, azureAuthMode: "app" as const }, server: noServer };
+    expect(authSignature(base)).toBe(authSignature({ ...base, settings: { ...base.settings, openaiApiKey: "sk" } }));
+    expect(authSignature(base)).not.toBe(authSignature({ ...base, settings: { ...base.settings, azureClientSecret: "new" } }));
+    expect(authSignature(base)).not.toBe(authSignature({ ...base, settings: { ...base.settings, azureAuthMode: "" } }));
   });
 });
 
