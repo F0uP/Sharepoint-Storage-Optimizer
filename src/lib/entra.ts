@@ -10,10 +10,12 @@ export const SHAREPOINT_HOST = /^[a-z0-9-]+\.sharepoint(-mil)?\.(com|us|cn|de)$/
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const GRAPH_RESOURCE = "https://graph.microsoft.com";
+/** App ID of SharePoint Online – as token resource it needs no SharePoint host (used to check certificate and permissions). */
+export const SHAREPOINT_APP_ID = "00000003-0000-0ff1-ce00-000000000000";
 
-/** Resources the app may request tokens for: Microsoft Graph or the SharePoint origin of a tenant. */
+/** Resources the app may request tokens for: Microsoft Graph, SharePoint Online or the SharePoint origin of a tenant. */
 export function isTokenResource(value: string): boolean {
-  if (value === GRAPH_RESOURCE) return true;
+  if (value === GRAPH_RESOURCE || value === SHAREPOINT_APP_ID) return true;
   try {
     const url = new URL(value);
     return url.protocol === "https:" && url.origin === value && SHAREPOINT_HOST.test(url.hostname);
@@ -65,16 +67,37 @@ export interface AccessInput {
   graphRoles: string[];
   /** error of the test call against Graph (e.g. 403) */
   graphError?: string;
-  /** SharePoint REST: null = no certificate, otherwise the roles of the SharePoint token or the error of the test call */
-  sharePoint: { roles: string[] } | { error: string } | null;
+  /**
+   * SharePoint REST: null = no certificate, otherwise the roles of the SharePoint token or the error.
+   * tested = false: only the token was checked, the test call needs the SharePoint address from Graph.
+   */
+  sharePoint: { roles: string[]; tested?: boolean } | { error: string } | null;
   mailSender: string;
 }
 
 const hasAny = (roles: string[], wanted: string[]) => roles.some((r) => wanted.includes(r));
 
+/**
+ * Why the Graph token cannot read sites (null = it can). The roles come straight from the token Entra ID issued,
+ * so a permission missing there is either delegated instead of an application permission, lacks admin consent
+ * or was added to the SharePoint API instead of Microsoft Graph.
+ */
+export function readProblem(graphRoles: string[], sharePointRoles: string[] = []): string | null {
+  if (hasAny(graphRoles, READ_ROLES)) return null;
+  if (hasAny(sharePointRoles, ["Sites.Read.All", "Sites.ReadWrite.All"])) {
+    return "Sites.Read.All ist nur für die SharePoint-API erteilt – die App braucht sie zusätzlich unter Microsoft Graph (Typ „Anwendung“).";
+  }
+  return (
+    "Sites.Read.All fehlt im App-Token. In Entra unter Microsoft Graph als Typ „Anwendung“ hinzufügen – „Delegiert“ gilt nur " +
+    "für die Benutzeranmeldung – und die Administratorzustimmung erteilen."
+  );
+}
+
 /** Translates the granted application permissions into what works in the app. */
 export function assessAppAccess({ graphRoles, graphError, sharePoint, mailSender }: AccessInput): AccessCheck[] {
   const consented = graphRoles.length > 0;
+  const sharePointRoles = sharePoint && "roles" in sharePoint ? sharePoint.roles : [];
+  const cannotRead = readProblem(graphRoles, sharePointRoles);
   const checks: AccessCheck[] = [
     {
       id: "token",
@@ -87,14 +110,16 @@ export function assessAppAccess({ graphRoles, graphError, sharePoint, mailSender
     {
       id: "read",
       label: "Sites finden und scannen",
-      state: hasAny(graphRoles, READ_ROLES) && !graphError ? "ok" : "missing",
-      hint: graphError ?? (hasAny(graphRoles, READ_ROLES) ? "Alle Sites des Tenants" : "Anwendungsberechtigung Sites.Read.All (Microsoft Graph)"),
+      state: !cannotRead && !graphError ? "ok" : "missing",
+      hint: cannotRead ?? graphError ?? "Alle Sites des Tenants",
     },
     {
       id: "write",
       label: "Dateien löschen und ersetzen",
       state: hasAny(graphRoles, WRITE_ROLES) ? "ok" : "missing",
-      hint: hasAny(graphRoles, WRITE_ROLES) ? "Papierkorb, endgültiges Löschen, Komprimieren" : "Anwendungsberechtigung Files.ReadWrite.All",
+      hint: hasAny(graphRoles, WRITE_ROLES)
+        ? "Papierkorb, endgültiges Löschen, Komprimieren"
+        : "Files.ReadWrite.All fehlt im App-Token – unter Microsoft Graph als Typ „Anwendung“ hinzufügen und zustimmen.",
     },
   ];
 
@@ -109,11 +134,18 @@ export function assessAppAccess({ graphRoles, graphError, sharePoint, mailSender
     checks.push({ id: "sharepoint", label: "Versionen, Papierkorb, Versionslimits", state: "missing", hint: sharePoint.error });
   } else {
     const ok = hasAny(sharePoint.roles, SHAREPOINT_ROLES);
+    const tested = sharePoint.tested !== false;
     checks.push({
       id: "sharepoint",
       label: "Versionen, Papierkorb, Versionslimits",
       state: ok ? "ok" : "missing",
-      hint: ok ? "Zertifikat wird von SharePoint akzeptiert" : "Anwendungsberechtigung Sites.FullControl.All (SharePoint)",
+      hint: ok
+        ? tested
+          ? "Zertifikat wird von SharePoint akzeptiert"
+          : "Zertifikat gültig, Sites.FullControl.All erteilt"
+        : tested
+          ? "Anwendungsberechtigung Sites.FullControl.All (SharePoint)"
+          : "Zertifikat gültig – es fehlt die Anwendungsberechtigung Sites.FullControl.All (SharePoint)",
     });
   }
 

@@ -144,7 +144,13 @@ describe("connectApp", () => {
 
   it("explains a denied site access", async () => {
     stubNetwork({ sites: 403 });
-    await expect(connectApp()).rejects.toThrow(/Sites\.Read\.All/);
+    await expect(connectApp()).rejects.toThrow(/HTTP 403.*Forbidden/);
+  });
+
+  it("names the missing site permission instead of calling Graph", async () => {
+    const { calls } = stubNetwork({ token: jwt({ roles: ["Mail.Send"] }) });
+    await expect(connectApp()).rejects.toThrow(/Sites\.Read\.All fehlt im App-Token.*„Anwendung“/);
+    expect(calls).toHaveLength(1);
   });
 });
 
@@ -169,6 +175,19 @@ describe("checkAppAccess", () => {
       "/api/sharepoint",
     ]);
     expect(calls[2].body).toMatchObject({ resource: "https://contoso.sharepoint.com" });
+  });
+
+  it("still checks the certificate when Graph denies the site access", async () => {
+    const { calls } = stubNetwork({ token: jwt({ roles: ["Mail.Send", "Sites.FullControl.All"] }), sites: 403 });
+    const report = await checkAppAccess({ ...credentials, certificate: "-----BEGIN CERTIFICATE-----" });
+
+    expect(calls.map((c) => c.url)).toEqual([
+      "/api/auth/token",
+      "https://graph.microsoft.com/v1.0/sites/root?$select=id,webUrl",
+      "/api/auth/token",
+    ]);
+    expect(calls[2].body).toMatchObject({ resource: "00000003-0000-0ff1-ce00-000000000000", certificate: "-----BEGIN CERTIFICATE-----" });
+    expect(report.checks.find((c) => c.id === "sharepoint")).toMatchObject({ state: "ok", hint: "Zertifikat gültig, Sites.FullControl.All erteilt" });
   });
 
   it("skips SharePoint without a certificate", async () => {

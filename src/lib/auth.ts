@@ -1,4 +1,14 @@
-import { assessAppAccess, GRAPH_RESOURCE, GUID_PATTERN, TENANT_PATTERN, tokenClaims, type AccessCheck } from "./entra";
+import {
+  assessAppAccess,
+  GRAPH_RESOURCE,
+  GUID_PATTERN,
+  readProblem,
+  SHAREPOINT_APP_ID,
+  TENANT_PATTERN,
+  tokenClaims,
+  type AccessCheck,
+  type AccessInput,
+} from "./entra";
 import { getAccessToken, getMsal, isMsalConfigured, signOut } from "./msal";
 
 /**
@@ -137,10 +147,14 @@ export function appSession(): AppSession | null {
   }
 }
 
+/** Only called with a token that carries a site permission – a denial then has another cause than a missing role. */
 async function graphError(res: Response): Promise<string> {
   const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
   if (res.status === 401 || res.status === 403) {
-    return "Zugriff verweigert – der App fehlt die Anwendungsberechtigung Sites.Read.All oder die Administratorzustimmung.";
+    return (
+      `Microsoft Graph verweigert den Zugriff auf die Sites (HTTP ${res.status}), obwohl die Berechtigung im App-Token steht` +
+      `${data.error?.message ? ` – ${data.error.message}` : ""}. Nach einer neuen Administratorzustimmung kann es einige Minuten dauern.`
+    );
   }
   return data.error?.message ?? `Microsoft Graph antwortete mit HTTP ${res.status}.`;
 }
@@ -155,6 +169,8 @@ export async function connectApp(): Promise<AppSession> {
   const token = await appToken(GRAPH_RESOURCE);
   const claims = tokenClaims(token);
   if (!claims.roles?.length) throw new Error(NO_APP_PERMISSIONS);
+  const cannotRead = readProblem(claims.roles);
+  if (cannotRead) throw new Error(cannotRead);
   const root = await rootSite(token);
   if ("error" in root) throw new Error(root.error);
   const session: AppSession = { host: root.webUrl ? new URL(root.webUrl).host : "", app: claims.app_displayname ?? "" };
@@ -185,6 +201,8 @@ export interface AccessReport {
 /**
  * Tests credentials from the settings form (not yet saved): Graph token, site access and – with a
  * certificate – a real SharePoint REST call, because SharePoint decides there whether it accepts the token.
+ * Without site access there is no SharePoint address; the SharePoint token alone still proves the
+ * certificate and shows which SharePoint permissions are granted.
  */
 export async function checkAppAccess(credentials: AppCredentials): Promise<AccessReport> {
   const { accessToken } = await requestAppToken(credentials, GRAPH_RESOURCE);
@@ -193,20 +211,25 @@ export async function checkAppAccess(credentials: AppCredentials): Promise<Acces
   const root = await rootSite(accessToken);
   const webUrl = "error" in root ? undefined : root.webUrl;
 
-  let sharePoint: { roles: string[] } | { error: string } | null = null;
-  if (credentials.certificate && webUrl) {
+  let sharePoint: AccessInput["sharePoint"] = null;
+  if (credentials.certificate) {
     try {
-      const sp = await requestAppToken(credentials, new URL(webUrl).origin);
-      const res = await fetch("/api/sharepoint", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${sp.accessToken}` },
-        body: JSON.stringify({ siteUrl: webUrl, path: "/_api/web?$select=Title", method: "GET" }),
-      });
-      if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(explainSharePointError(data.error ?? `SharePoint antwortete mit HTTP ${res.status}.`, true));
+      if (webUrl) {
+        const sp = await requestAppToken(credentials, new URL(webUrl).origin);
+        const res = await fetch("/api/sharepoint", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${sp.accessToken}` },
+          body: JSON.stringify({ siteUrl: webUrl, path: "/_api/web?$select=Title", method: "GET" }),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(explainSharePointError(data.error ?? `SharePoint antwortete mit HTTP ${res.status}.`, true));
+        }
+        sharePoint = { roles: tokenClaims(sp.accessToken).roles ?? [] };
+      } else {
+        const sp = await requestAppToken(credentials, SHAREPOINT_APP_ID);
+        sharePoint = { roles: tokenClaims(sp.accessToken).roles ?? [], tested: false };
       }
-      sharePoint = { roles: tokenClaims(sp.accessToken).roles ?? [] };
     } catch (e) {
       sharePoint = { error: e instanceof Error ? e.message : String(e) };
     }

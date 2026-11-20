@@ -9,6 +9,8 @@ function fakeJwt(claims: object) {
 describe("isTokenResource", () => {
   it("allows Graph and SharePoint origins only", () => {
     expect(isTokenResource("https://graph.microsoft.com")).toBe(true);
+    expect(isTokenResource("00000003-0000-0ff1-ce00-000000000000")).toBe(true);
+    expect(isTokenResource("00000003-0000-0000-c000-000000000000")).toBe(false);
     expect(isTokenResource("https://contoso.sharepoint.com")).toBe(true);
     expect(isTokenResource("https://contoso.sharepoint.com/")).toBe(false);
     expect(isTokenResource("https://contoso.sharepoint.com.evil.io")).toBe(false);
@@ -60,6 +62,25 @@ describe("assessAppAccess", () => {
     });
     expect(states(checks)).toMatchObject({ read: "ok", write: "missing", sharepoint: "missing" });
     expect(checks.find((c) => c.id === "sharepoint")?.hint).toBe("Unsupported app only token.");
+  });
+
+  it("explains permissions that Entra ID left out of the app token", () => {
+    const checks = assessAppAccess({
+      graphRoles: ["Mail.Send"],
+      graphError: "Zugriff verweigert",
+      sharePoint: { roles: ["Sites.FullControl.All"], tested: false },
+      mailSender: "speicher@contoso.com",
+    });
+    expect(states(checks)).toMatchObject({ token: "ok", read: "missing", write: "missing", sharepoint: "ok", mail: "ok" });
+    expect(checks.find((c) => c.id === "read")?.hint).toMatch(/Sites\.Read\.All fehlt im App-Token.*„Delegiert“/);
+    expect(checks.find((c) => c.id === "write")?.hint).toMatch(/Files\.ReadWrite\.All fehlt im App-Token/);
+    expect(checks.find((c) => c.id === "sharepoint")?.hint).toBe("Zertifikat gültig, Sites.FullControl.All erteilt");
+  });
+
+  it("spots site permissions added to the SharePoint API instead of Graph", () => {
+    const checks = assessAppAccess({ graphRoles: ["Mail.Send"], sharePoint: { roles: ["Sites.Read.All"], tested: false }, mailSender: "" });
+    expect(checks.find((c) => c.id === "read")?.hint).toMatch(/nur für die SharePoint-API/);
+    expect(checks.find((c) => c.id === "sharepoint")).toMatchObject({ state: "missing", hint: expect.stringMatching(/^Zertifikat gültig – es fehlt/) });
   });
 
   it("shows a failed site call on the read check", () => {
