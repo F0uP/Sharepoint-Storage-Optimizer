@@ -18,7 +18,10 @@ export async function POST(request: Request) {
   try {
     return Response.json(await analyze(provider, buildPrompt(parsed.data), { apiKey, model: parsed.data.model }));
   } catch (error) {
-    const status = error instanceof ProviderError ? error.status : 500;
-    return Response.json({ error: error instanceof Error ? error.message : "Unbekannter Fehler" }, { status });
+    if (error instanceof ProviderError) {
+      // retryAfter tells the browser that the provider is only temporarily unavailable
+      return Response.json({ error: error.message, retryAfter: error.retryAfter }, { status: error.status });
+    }
+    return Response.json({ error: error instanceof Error ? error.message : "Unbekannter Fehler" }, { status: 500 });
   }
 }

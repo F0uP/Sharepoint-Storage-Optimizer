@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { analyze, describeVerifyError, geminiSchema, ProviderError, resolveCredentials, serverProviders } from "./ai-providers";
+import { analyze, describeVerifyError, geminiSchema, ProviderError, providerError, resolveCredentials, serverProviders } from "./ai-providers";
 import { buildPrompt } from "./analyze-request";
 
 describe("serverProviders", () => {
@@ -58,6 +58,43 @@ describe("describeVerifyError", () => {
       status: 404,
       message: expect.stringContaining("gemini-x"),
     });
+  });
+});
+
+describe("providerError", () => {
+  /** like the Gemini SDK's ApiError: HTTP status plus the JSON error body as message */
+  const geminiError = (status: number, error: object) => Object.assign(new Error(JSON.stringify({ error })), { status });
+
+  it("marks an overloaded Gemini model as retryable and hides the raw JSON", () => {
+    const error = providerError(
+      "gemini",
+      geminiError(503, { code: 503, message: "This model is currently experiencing high demand.", status: "UNAVAILABLE" }),
+    );
+    expect(error).toMatchObject({ status: 503, retryAfter: 0, message: "Google Gemini ist gerade überlastet." });
+  });
+
+  it("takes the wait time from Gemini's RetryInfo", () => {
+    const error = providerError(
+      "gemini",
+      geminiError(429, {
+        code: 429,
+        message: "You exceeded your current quota.",
+        status: "RESOURCE_EXHAUSTED",
+        details: [{ "@type": "type.googleapis.com/google.rpc.QuotaFailure" }, { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "36.4s" }],
+      }),
+    );
+    expect(error).toMatchObject({ status: 429, retryAfter: 37 });
+  });
+
+  it("does not retry errors that waiting cannot fix", () => {
+    const bad = providerError("gemini", geminiError(400, { code: 400, message: "Invalid JSON schema.", status: "INVALID_ARGUMENT" }));
+    expect(bad).toMatchObject({ status: 400, retryAfter: undefined, message: "Google Gemini: Invalid JSON schema." });
+    const quota = providerError("openai", Object.assign(new Error("You exceeded your quota"), { status: 429, code: "insufficient_quota" }));
+    expect(quota).toMatchObject({ status: 429, retryAfter: undefined, message: expect.stringContaining("Kontingent aufgebraucht") });
+  });
+
+  it("retries network errors without an HTTP status", () => {
+    expect(providerError("openai", new Error("fetch failed"))).toMatchObject({ status: 502, retryAfter: 0, message: "OpenAI ist nicht erreichbar (fetch failed)." });
   });
 });
 

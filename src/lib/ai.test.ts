@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MB, makeFile, makeScan } from "../../tests/factories";
 import { mapRecommendations, runAiAnalysis, selectCandidates } from "./ai";
 
@@ -82,5 +82,68 @@ describe("runAiAnalysis", () => {
   it("surfaces the server error message", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "Kein Key" }, { status: 503 })));
     await expect(runAiAnalysis(makeScan([makeFile()]))).rejects.toThrow("Kein Key");
+  });
+});
+
+describe("runAiAnalysis retries", () => {
+  // plain objects instead of Response: reading them needs no real timers
+  const reply = (status: number, data: object) => ({ ok: status < 400, status, json: async () => data }) as Response;
+  const busy = () => reply(503, { error: "Google Gemini ist gerade überlastet.", retryAfter: 0 });
+  const done = () => reply(200, { summary: "ok", tips: [], recommendations: [] });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("waits and retries while the provider is overloaded – a longer wait requested by the provider wins", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValueOnce(reply(429, { error: "Google Gemini: Anfragelimit erreicht.", retryAfter: 30 }))
+      .mockResolvedValueOnce(done());
+    vi.stubGlobal("fetch", fetchMock);
+    const onRetry = vi.fn();
+
+    const run = runAiAnalysis(makeScan([makeFile()]), { onRetry });
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(run).resolves.toMatchObject({ summary: "ok" });
+    expect(onRetry.mock.calls.map(([r]) => r)).toEqual([
+      { attempt: 1, attempts: 3, until: 10_000, reason: "Google Gemini ist gerade überlastet." },
+      { attempt: 2, attempts: 3, until: 40_000, reason: "Google Gemini: Anfragelimit erreicht." },
+    ]);
+  });
+
+  it("gives up after three retries", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => busy());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const failed = expect(runAiAnalysis(makeScan([makeFile()]))).rejects.toThrow(
+      "Google Gemini ist gerade überlastet. Auch 3 weitere Versuche schlugen fehl",
+    );
+    await vi.advanceTimersByTimeAsync(70_000);
+    await failed;
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("stops waiting when cancelled", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => busy());
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+
+    const cancelled = expect(runAiAnalysis(makeScan([makeFile()]), { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    await vi.advanceTimersByTimeAsync(5_000);
+    controller.abort();
+    await cancelled;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -74,6 +74,15 @@ describe("POST /api/ai/analyze", () => {
     vi.mocked(analyze).mockRejectedValue(new ProviderError("OpenAI: rate limit", 429));
     const res = await post(validBody);
     expect(res.status).toBe(429);
-    expect((await res.json()).error).toContain("rate limit");
+    expect(await res.json()).toEqual({ error: "OpenAI: rate limit" });
+  });
+
+  it("tells the browser when a retry makes sense", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "k");
+    const { ProviderError } = await import("@/lib/server/ai-providers");
+    vi.mocked(analyze).mockRejectedValue(new ProviderError("Google Gemini ist gerade überlastet.", 503, 0));
+    const res = await post(validBody);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "Google Gemini ist gerade überlastet.", retryAfter: 0 });
   });
 });

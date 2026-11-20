@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ArchiveIcon,
@@ -25,7 +25,7 @@ import { FileTable, type FileRow } from "../file-table";
 import { PageHeader } from "../page-header";
 import { openSettings } from "../settings-dialog";
 import { useAiProviders } from "@/hooks/use-ai-providers";
-import { runAiAnalysis, selectCandidates } from "@/lib/ai";
+import { runAiAnalysis, selectCandidates, type AiRetry } from "@/lib/ai";
 import type { ProviderId } from "@/lib/ai-config";
 import { apiKeyOf, useSettings } from "@/lib/settings";
 import { errorMessage } from "@/lib/actions";
@@ -67,6 +67,31 @@ interface AiRow {
   row: FileRow;
 }
 
+/** Progress line of a running analysis – counts down while it waits for an automatic retry. */
+function AnalysisStatus({ label, count, retry }: { label?: string; count: number; retry: AiRetry | null }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!retry) return;
+    const timer = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, [retry]);
+
+  const seconds = retry ? Math.ceil((retry.until - now) / 1000) : 0;
+  if (retry && seconds > 0) {
+    return (
+      <span>
+        {retry.reason} Neuer Versuch in <span className="tabular">{seconds}</span> s ({retry.attempt} von {retry.attempts}).
+      </span>
+    );
+  }
+  return (
+    <span>
+      {retry && `Versuch ${retry.attempt} von ${retry.attempts}: `}
+      {label} analysiert {formatNumber(count)} Dateien … das dauert meist 20–60 Sekunden.
+    </span>
+  );
+}
+
 export function AiView() {
   const scan = useApp((s) => s.scan)!;
   const ai = useApp((s) => s.ai);
@@ -75,6 +100,8 @@ export function AiView() {
   const providers = useAiProviders();
   const [choice, setChoice] = useState<ProviderId | undefined>();
   const [running, setRunning] = useState(false);
+  const [retry, setRetry] = useState<AiRetry | null>(null);
+  const abort = useRef<AbortController | null>(null);
   const [action, setAction] = useState<AiAction>("delete");
   const configured = providers.length > 0;
 
@@ -83,13 +110,18 @@ export function AiView() {
 
   async function analyze() {
     if (!activeProvider) return;
+    const controller = new AbortController();
+    abort.current = controller;
     setRunning(true);
+    setRetry(null);
     try {
       const { settings } = useSettings.getState();
       const result = await runAiAnalysis(scan, {
         provider: activeProvider.id,
         apiKey: activeProvider.source === "local" ? apiKeyOf(settings, activeProvider.id) : undefined,
         model: activeProvider.model,
+        signal: controller.signal,
+        onRetry: setRetry,
       });
       setAi(result);
       const first = ACTIONS.find((a) => result.recommendations.some((r) => r.action === a.value));
@@ -98,9 +130,12 @@ export function AiView() {
         description: `${result.provider} · ${result.model}`,
       });
     } catch (e) {
-      toast.error("KI-Analyse fehlgeschlagen", { description: errorMessage(e) });
+      if (controller.signal.aborted) toast("KI-Analyse abgebrochen");
+      else toast.error("KI-Analyse fehlgeschlagen", { description: errorMessage(e) });
     } finally {
       setRunning(false);
+      setRetry(null);
+      abort.current = null;
     }
   }
 
@@ -219,11 +254,14 @@ export function AiView() {
 
       {running && (
         <div className="space-y-4">
-          <div className="flex items-center gap-3 rounded-xl border bg-card p-5 text-sm">
-            <Spinner className="size-4" />
-            <span>
-              {activeProvider?.label} analysiert {formatNumber(candidateCount)} Dateien … das dauert meist 20–60 Sekunden.
-            </span>
+          <div className="flex items-center gap-3 rounded-xl border bg-card p-5 text-sm" role="status">
+            <Spinner className="size-4 shrink-0" />
+            <div className="min-w-0 flex-1 text-pretty">
+              <AnalysisStatus key={retry?.until} label={activeProvider?.label} count={candidateCount} retry={retry} />
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => abort.current?.abort()}>
+              Abbrechen
+            </Button>
           </div>
           <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-5">
             {Array.from({ length: 5 }, (_, i) => (

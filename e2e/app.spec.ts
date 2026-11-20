@@ -100,6 +100,31 @@ test("version scan finds old versions", async ({ page }) => {
   await expect(page.getByRole("button", { name: /Alte Versionen/ })).toBeVisible();
 });
 
+test("AI analysis retries by itself while the provider is overloaded", async ({ page }) => {
+  await page.clock.install();
+  await mockAi(page);
+  let calls = 0;
+  // registered last, so it answers first: only the first call hits an overloaded provider
+  await page.route("**/api/ai/analyze", (route) =>
+    calls++ === 0 ? route.fulfill({ status: 503, json: { error: "OpenAI ist gerade überlastet.", retryAfter: 0 } }) : route.fallback(),
+  );
+  await openDemo(page);
+  await page.getByRole("button", { name: "KI-Analyse" }).first().click();
+  await page.getByRole("button", { name: "API-Schlüssel hinterlegen" }).click();
+  const dialog = page.getByRole("dialog", { name: "Einstellungen" });
+  await dialog.getByLabel("API-Schlüssel").first().fill("sk-test-openai");
+  await dialog.getByRole("button", { name: "Speichern" }).click();
+  await expect(dialog).toBeHidden();
+
+  await page.getByRole("button", { name: "Analyse starten" }).first().click();
+  await expect(page.getByRole("status").filter({ hasText: "überlastet" })).toContainText(
+    /OpenAI ist gerade überlastet\. Neuer Versuch in \d+ s \(1 von 3\)\./,
+  );
+  await page.clock.fastForward(10_000);
+  await expect(page.getByText("Der meiste Speicher liegt in Rohvideos")).toBeVisible();
+  expect(calls).toBe(2);
+});
+
 test("AI keys are entered in the app and drive the analysis", async ({ page }) => {
   const sentKeys: string[] = [];
   await mockAi(page, sentKeys);

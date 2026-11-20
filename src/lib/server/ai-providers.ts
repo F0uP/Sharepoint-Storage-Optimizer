@@ -94,14 +94,64 @@ export class ProviderError extends Error {
   constructor(
     message: string,
     readonly status = 502,
+    /** temporary problem: seconds the provider asks to wait (0 = no hint); undefined = retrying will not help */
+    readonly retryAfter?: number,
   ) {
     super(message);
   }
 }
 
-function statusOf(error: unknown): number {
+function httpStatusOf(error: unknown): number | undefined {
   const status = (error as { status?: unknown } | null)?.status;
-  return typeof status === "number" && status >= 400 ? status : 502;
+  return typeof status === "number" && status >= 400 ? status : undefined;
+}
+
+const statusOf = (error: unknown) => httpStatusOf(error) ?? 502;
+
+/** Statuses after which the same request can succeed: timeout, rate limit, overload, gateway problems. */
+const TRANSIENT_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+const MAX_RETRY_AFTER = 120;
+
+/** Gemini puts the whole JSON error body into the message – takes the readable text and the RetryInfo delay out of it. */
+function parseGoogleError(message: string): { text?: string; retryAfter?: number } {
+  const start = message.indexOf("{");
+  if (start < 0) return {};
+  try {
+    const { error } = JSON.parse(message.slice(start)) as { error?: { message?: unknown; details?: { retryDelay?: unknown }[] } };
+    const delay = error?.details?.map((d) => d?.retryDelay).find((d) => typeof d === "string");
+    return {
+      text: typeof error?.message === "string" ? error.message : undefined,
+      retryAfter: typeof delay === "string" ? Number.parseFloat(delay) || undefined : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** Turns an SDK error into a readable ProviderError; temporary problems (overload, rate limit) are marked as retryable. */
+export function providerError(provider: ProviderId, error: unknown): ProviderError {
+  const label = AI_PROVIDERS[provider].label;
+  const raw = (error as { message?: unknown } | null)?.message;
+  const message = typeof raw === "string" ? raw : String(error);
+  const google = parseGoogleError(message);
+  const status = httpStatusOf(error);
+
+  // OpenAI: billing limit reached – waiting does not help
+  if ((error as { code?: unknown } | null)?.code === "insufficient_quota") {
+    return new ProviderError(`${label}: Kontingent aufgebraucht – prüfe Tarif und Abrechnung beim Anbieter.`, 429);
+  }
+  if (status !== undefined && !TRANSIENT_STATUS.has(status)) return new ProviderError(`${label}: ${google.text ?? message}`, status);
+
+  const retryAfter = Math.min(Math.ceil(google.retryAfter ?? 0), MAX_RETRY_AFTER);
+  const reason =
+    status === undefined
+      ? `${label} ist nicht erreichbar (${message}).`
+      : status === 429
+        ? `${label}: Anfragelimit erreicht.`
+        : status === 503
+          ? `${label} ist gerade überlastet.`
+          : `${label} meldet einen vorübergehenden Fehler (HTTP ${status}).`;
+  return new ProviderError(reason, status ?? 502, retryAfter);
 }
 
 async function analyzeWithOpenAI(input: string, { apiKey, model }: Credentials): Promise<Analysis> {
@@ -118,7 +168,7 @@ async function analyzeWithOpenAI(input: string, { apiKey, model }: Credentials):
     return response.output_parsed;
   } catch (error) {
     if (error instanceof ProviderError) throw error;
-    throw new ProviderError(`OpenAI: ${error instanceof Error ? error.message : String(error)}`, statusOf(error));
+    throw providerError("openai", error);
   }
 }
 
@@ -145,7 +195,7 @@ async function analyzeWithGemini(input: string, { apiKey, model }: Credentials):
     });
     text = response.text;
   } catch (error) {
-    throw new ProviderError(`Gemini: ${error instanceof Error ? error.message : String(error)}`, statusOf(error));
+    throw providerError("gemini", error);
   }
   let json: unknown;
   try {
@@ -180,7 +230,7 @@ export function describeVerifyError(provider: ProviderId, model: string, error: 
     return new ProviderError(`${label}: API-Schlüssel ungültig oder ohne Berechtigung.`, 401);
   }
   if (status === 404) return new ProviderError(`${label}: Modell „${model}“ nicht gefunden.`, 404);
-  return new ProviderError(`${label}: ${message}`, status);
+  return providerError(provider, error);
 }
 
 /** Cheap check that key and model work – fetches the model's metadata, no tokens are used. */
