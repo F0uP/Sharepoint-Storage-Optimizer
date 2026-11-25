@@ -112,12 +112,20 @@ test("backs up files into a local folder before deleting them", async () => {
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "Ordner wählen" }).click();
   await expect(dialog.getByText(target)).toBeVisible();
+  // the complete SharePoint path is recreated by default – the preview shows where the files land
+  await expect(dialog.getByRole("radio", { name: "Kompletter Pfad" })).toHaveAttribute("data-state", "on");
+  await expect(dialog.getByTestId("backup-preview")).toContainText("Marketing & Kommunikation");
   await dialog.getByRole("button", { name: "Sichern & löschen" }).click();
   await expect(page.getByText("2 Dateien gesichert und gelöscht")).toBeVisible();
 
   const written = readdirSync(target, { recursive: true, withFileTypes: true }).filter((e) => e.isFile());
-  expect(written).toHaveLength(2);
-  expect(readFileSync(path.join(written[0].parentPath, written[0].name), "utf8")).toContain("Demo-Platzhalter");
+  const index = written.filter((e) => e.parentPath === target && /^Sicherung .+\.csv$/.test(e.name));
+  const copies = written.filter((e) => !index.includes(e));
+  expect(index).toHaveLength(1);
+  expect(copies).toHaveLength(2);
+  for (const copy of copies) expect(copy.parentPath.startsWith(path.join(target, "Marketing & Kommunikation"))).toBe(true);
+  expect(readFileSync(path.join(copies[0].parentPath, copies[0].name), "utf8")).toContain("Demo-Platzhalter");
+  expect(readFileSync(path.join(target, index[0].name), "utf8")).toContain("Lokale Datei;Site;SharePoint-Pfad");
   rmSync(target, { recursive: true, force: true });
 });
 

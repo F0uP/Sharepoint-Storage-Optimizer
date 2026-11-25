@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { describeForecast, forecast, pricePerGb, yearlyCost } from "./costs";
 import { formatCurrency } from "./format";
+import { SITE_MAX_BYTES } from "./quota";
 import type { Snapshot } from "./trend";
 
 const GB = 1024 ** 3;
@@ -40,5 +41,15 @@ describe("forecast", () => {
   it("recognises shrinking or full sites", () => {
     expect(forecast([snap(60, 900 * GB), snap(30, 850 * GB), snap(0, 800 * GB)], NOW).status).toBe("stable");
     expect(forecast([snap(60, 990 * GB), snap(30, 995 * GB), snap(0, 1000 * GB)], NOW).status).toBe("full");
+  });
+
+  it("predicts no date for sites without a limit of their own", () => {
+    // automatic storage management: Graph reports the 25 TB maximum per site
+    const pooled = [snap(90, 1700 * GB, SITE_MAX_BYTES), snap(45, 1750 * GB, SITE_MAX_BYTES), snap(0, 1800 * GB, SITE_MAX_BYTES)];
+    const f = forecast(pooled, NOW);
+    expect(f).toMatchObject({ status: "pooled" });
+    expect(describeForecast(f)).toContain("gemeinsamen Speicher des Mandanten");
+    // a site that hardly grows is stable either way
+    expect(forecast([snap(60, 900 * GB, SITE_MAX_BYTES), snap(30, 900 * GB, SITE_MAX_BYTES), snap(0, 900 * GB, SITE_MAX_BYTES)], NOW).status).toBe("stable");
   });
 });

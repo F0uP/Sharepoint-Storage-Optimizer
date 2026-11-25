@@ -9,11 +9,15 @@ export interface DownloadJob {
   relativePath: string;
   /** expected size – the download is rejected if it differs */
   size?: number;
+  /** last change in SharePoint (ISO) – becomes the modification date of the copy */
+  modified?: string;
 }
 
 export interface DownloadResult {
   succeeded: string[];
   failed: { id: string; error: string }[];
+  /** where each saved file ended up, relative to the chosen folder */
+  paths: Record<string, string>;
 }
 
 export interface MediaStatus {
@@ -70,6 +74,8 @@ export interface DesktopBridge {
   appInfo(): Promise<AppInfo>;
   chooseFolder(): Promise<string | null>;
   downloadFiles(folder: string, jobs: DownloadJob[]): Promise<DownloadResult>;
+  /** writes the table of contents of a backup into the folder; returns its path relative to it */
+  writeBackupIndex(folder: string, content: string): Promise<string>;
   mediaStatus(): Promise<MediaStatus>;
   compressFile(job: CompressJob): Promise<CompressResult>;
   uploadFile(tempId: string, uploadUrl: string): Promise<void>;

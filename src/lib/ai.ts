@@ -1,6 +1,7 @@
 import { AI_KEY_HEADER, type ProviderId } from "./ai-config";
 import { categoryStats, computeInsights, largest, type Insight } from "./analysis";
 import { ageInYears } from "./format";
+import { siteLimit } from "./quota";
 import type { AiAction, AiPriority, AiResult, ScanResult, SpFile } from "./types";
 
 const MAX_CANDIDATES = 700;
@@ -151,7 +152,8 @@ export async function runAiAnalysis(scan: ScanResult, options: AiRunOptions = {}
     stats: {
       totalFiles: scan.files.length,
       totalBytes: scan.files.reduce((s, f) => s + f.size, 0),
-      quotaTotal: scan.quota?.total,
+      // not the 25 TB maximum of sites without a limit – the model would read it as plenty of room
+      quotaTotal: siteLimit(scan.quota),
       quotaUsed: scan.quota?.used,
       recycleBin: scan.quota?.deleted,
       byCategory: categoryStats(scan.files).filter((c) => c.count > 0),

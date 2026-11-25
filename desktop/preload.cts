@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("desktop", {
   notify: (title: string, body: string) => ipcRenderer.invoke("app:notify", title, body),
   chooseFolder: (): Promise<string | null> => ipcRenderer.invoke("backup:choose"),
   downloadFiles: (folder: string, jobs: unknown) => ipcRenderer.invoke("backup:download", folder, jobs),
+  writeBackupIndex: (folder: string, content: string): Promise<string> => ipcRenderer.invoke("backup:index", folder, content),
   mediaStatus: () => ipcRenderer.invoke("media:status"),
   compressFile: (job: unknown) => ipcRenderer.invoke("media:compress", job),
   uploadFile: (tempId: string, uploadUrl: string) => ipcRenderer.invoke("media:upload", tempId, uploadUrl),

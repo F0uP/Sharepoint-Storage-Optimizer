@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { downloadAll, downloadTo, isAllowedSource, resolveInside, safeSegment } from "./backup.mjs";
+import { downloadAll, downloadTo, isAllowedSource, resolveInside, safeSegment, writeIndex } from "./backup.mjs";
 
 let dir: string;
 beforeEach(async () => {
@@ -76,7 +76,32 @@ describe("downloadTo / downloadAll", () => {
     );
     expect(result.succeeded).toEqual(["1"]);
     expect(result.failed).toEqual([{ id: "2", error: "Download-Quelle nicht erlaubt" }]);
+    expect(result.paths).toEqual({ "1": path.join("Dokumente", "ok.txt") });
     expect(progress.at(-1)).toBe(2);
     expect(await readFile(path.join(dir, "Dokumente", "ok.txt"), "utf8")).toBe("ok");
+  });
+
+  it("recreates the folders, reports renamed copies and keeps the original modification date", async () => {
+    const modified = "2021-03-04T05:06:07.000Z";
+    const result = await downloadAll(dir, [
+      { id: "a", url: dataUrl("1"), relativePath: "Vertrieb/Dokumente/Projekte/2021/Plan.pdf", modified },
+      { id: "b", url: dataUrl("2"), relativePath: "Vertrieb/Dokumente/Projekte/2021/Plan.pdf", modified: "kein Datum" },
+    ], undefined, 1);
+    expect(result.paths).toEqual({
+      a: path.join("Vertrieb", "Dokumente", "Projekte", "2021", "Plan.pdf"),
+      b: path.join("Vertrieb", "Dokumente", "Projekte", "2021", "Plan (2).pdf"),
+    });
+    expect((await stat(path.join(dir, result.paths.a))).mtime.toISOString()).toBe(modified);
+    // an invalid date is ignored – the copy keeps the time it was written
+    expect(Date.now() - (await stat(path.join(dir, result.paths.b))).mtimeMs).toBeLessThan(60_000);
+  });
+});
+
+describe("writeIndex", () => {
+  it("writes the table of contents next to the copies without overwriting an earlier one", async () => {
+    const now = new Date(2026, 10, 25, 14, 30);
+    expect(await writeIndex(dir, "eins", now)).toBe("Sicherung 2026-11-25 14-30.csv");
+    expect(await writeIndex(dir, "zwei", now)).toBe("Sicherung 2026-11-25 14-30 (2).csv");
+    expect(await readFile(path.join(dir, "Sicherung 2026-11-25 14-30.csv"), "utf8")).toBe("eins");
   });
 });

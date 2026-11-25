@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useInsights } from "@/hooks/use-insights";
 import { errorMessage } from "@/lib/actions";
+import { potential as potentialOf } from "@/lib/analysis";
 import { pricePerGb } from "@/lib/costs";
+import type { FolderTree } from "@/lib/folders";
 import { useSettings } from "@/lib/settings";
 import { useApp } from "@/lib/store";
 
@@ -38,6 +40,44 @@ export function useReport() {
       toast.error("Bericht konnte nicht erstellt werden", { description: errorMessage(e) });
     } finally {
       setBusy(false);
+    }
+  }
+
+  return { generate, busy };
+}
+
+/** Report on a single folder (subfolders included); `busy` is the path being rendered. */
+export function useFolderReport() {
+  const { insights } = useInsights();
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function generate(path: string, tree?: FolderTree) {
+    const { scan, mode } = useApp.getState();
+    if (!scan || busy) return;
+    setBusy(path);
+    try {
+      const [{ downloadFolderReport }, { folderTree, summarizeFolder }] = await Promise.all([
+        import("@/lib/report/generate"),
+        import("@/lib/folders"),
+      ]);
+      const folders = tree ?? folderTree(scan.files);
+      const summary = summarizeFolder(scan.files, folders, path, insights, Date.parse(scan.scannedAt));
+      if (!summary) throw new Error("Den Ordner gibt es nicht mehr – die Site wurde inzwischen aktualisiert.");
+      await downloadFolderReport({
+        site: scan.site,
+        scannedAt: scan.scannedAt,
+        summary,
+        potential: potentialOf(summary.insights),
+        siteBytes: folders.roots.reduce((s, r) => s + r.bytes, 0),
+        generatedAt: new Date(),
+        demo: mode === "demo",
+        price: pricePerGb(useSettings.getState().settings),
+      });
+      toast.success(`Bericht für „${summary.folder.name}“ erstellt`, { description: "Das PDF wurde heruntergeladen." });
+    } catch (e) {
+      toast.error("Ordnerbericht konnte nicht erstellt werden", { description: errorMessage(e) });
+    } finally {
+      setBusy(null);
     }
   }
 

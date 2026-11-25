@@ -38,7 +38,11 @@ export function buildPrompt({ siteName, stats, files }: AnalyzeRequest): string 
   const header = [
     `Site: ${siteName}`,
     `Dateien gesamt: ${stats.totalFiles}, Volumen: ${gb(stats.totalBytes)} GB`,
-    stats.quotaTotal ? `Kontingent: ${gb(stats.quotaUsed ?? 0)} von ${gb(stats.quotaTotal)} GB belegt` : "",
+    stats.quotaTotal
+      ? `Kontingent: ${gb(stats.quotaUsed ?? 0)} von ${gb(stats.quotaTotal)} GB belegt`
+      : stats.quotaUsed
+        ? `Belegt: ${gb(stats.quotaUsed)} GB (kein eigenes Site-Limit, gemeinsamer Speicher des Mandanten)`
+        : "",
     stats.recycleBin ? `Papierkorb: ${gb(stats.recycleBin)} GB` : "",
     `Nach Typ: ${stats.byCategory.map((c) => `${c.category} ${c.count} Dateien / ${gb(c.bytes)} GB`).join("; ")}`,
   ]

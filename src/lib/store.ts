@@ -9,7 +9,13 @@ import type { AiResult, FileCategory, Quota, ScanProgress, ScanResult, SiteRef, 
 export type View = "overview" | "files" | "optimize" | "ai" | "rules" | "reviews" | "history";
 export type Mode = "live" | "demo";
 /** pre-set filter when jumping from the overview into another view */
-export type ViewPreset = { category?: FileCategory; insight?: string; query?: string };
+export type ViewPreset = {
+  category?: FileCategory;
+  insight?: string;
+  query?: string;
+  /** only files in this folder (subfolders included), e.g. "Dokumente/Projekte" */
+  folder?: string;
+};
 
 export interface CleanupStats {
   /** bytes released from the quota in this session */

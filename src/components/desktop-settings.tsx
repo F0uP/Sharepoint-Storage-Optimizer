@@ -58,7 +58,7 @@ export function DesktopSettings({ draft, patch }: { draft: Settings; patch: Patc
           <FieldLabel htmlFor="desktop-background">Im Hintergrund weiterlaufen</FieldLabel>
           <FieldDescription>
             Beim Schließen bleibt die App im Infobereich und prüft regelmäßig das Kontingent aller bereits analysierten Sites. Wird es
-            knapp, gibt es eine Benachrichtigung.
+            knapp, gibt es eine Benachrichtigung – für Sites mit eigenem Speicherlimit; die übrigen erweitern nur den Verlauf.
           </FieldDescription>
         </FieldContent>
         <Switch id="desktop-background" checked={background} onCheckedChange={(v) => patch({ desktopBackground: v ? "on" : "" })} />

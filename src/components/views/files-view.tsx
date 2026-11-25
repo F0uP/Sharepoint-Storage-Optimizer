@@ -1,7 +1,8 @@
 "use client";
 
 import { useDeferredValue, useMemo, useState } from "react";
-import { SearchIcon, SparklesIcon } from "lucide-react";
+import { FolderIcon, SearchIcon, SparklesIcon, XIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -10,6 +11,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { FileTable, type FileRow } from "../file-table";
 import { PageHeader } from "../page-header";
 import { CATEGORY_META, CATEGORY_ORDER } from "@/lib/file-types";
+import { isInFolder } from "@/lib/folders";
 import { ageInYears } from "@/lib/format";
 import { useApp } from "@/lib/store";
 import type { FileCategory } from "@/lib/types";
@@ -39,6 +41,7 @@ export function FilesView() {
   const [minSize, setMinSize] = useState("0");
   const [minAge, setMinAge] = useState("0");
   const [drive, setDrive] = useState("all");
+  const [folder, setFolder] = useState(preset?.folder ?? null);
   const deferredQuery = useDeferredValue(query);
 
   const counts = useMemo(() => {
@@ -63,12 +66,13 @@ export function FilesView() {
           (category === "all" || f.category === category) &&
           f.size >= size &&
           (drive === "all" || f.driveId === drive) &&
+          (!folder || isInFolder(f, folder)) &&
           (age === 0 || ageInYears(f.modified, now) >= age) &&
           (!aiOnly || aiHints.has(f.id)) &&
           (!q || f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q)),
       )
       .map((f) => ({ id: f.id, file: f, bytes: f.size, ai: aiHints.get(f.id) }));
-  }, [scan.files, scan.scannedAt, category, minSize, minAge, drive, deferredQuery, aiOnly, aiHints]);
+  }, [scan.files, scan.scannedAt, category, minSize, minAge, drive, folder, deferredQuery, aiOnly, aiHints]);
 
   return (
     <div>
@@ -142,6 +146,20 @@ export function FilesView() {
                 ))}
               </SelectContent>
             </Select>
+          )}
+          {folder && (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="max-w-full"
+              onClick={() => setFolder(null)}
+              aria-label={`Ordnerfilter ${folder} entfernen`}
+              title={folder}
+            >
+              <FolderIcon />
+              <span className="truncate">{folder.split("/").join(" / ")}</span>
+              <XIcon className="text-muted-foreground" />
+            </Button>
           )}
           {aiHints.size > 0 && (
             <div className="flex h-8 items-center gap-2 rounded-lg border px-2.5">

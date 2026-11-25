@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { AgeStat, CategoryStat, FolderStat } from "@/lib/analysis";
 import { CATEGORY_META } from "@/lib/file-types";
 import { formatBytes, formatDate, formatNumber, formatPercent } from "@/lib/format";
+import { siteLimit } from "@/lib/quota";
 import type { Snapshot } from "@/lib/trend";
 import type { FileCategory } from "@/lib/types";
 
@@ -59,14 +60,14 @@ export function StorageSplit({ stats, onSelect }: { stats: CategoryStat[]; onSel
 
 /* ------------------------------------------------------------ largest folders */
 
-export function FolderBars({ folders }: { folders: FolderStat[] }) {
+export function FolderBars({ folders, onSelect }: { folders: FolderStat[]; onSelect?(path: string): void }) {
   const max = folders[0]?.bytes || 1;
   return (
-    <ul className="space-y-3.5">
+    <ul className="-mx-2 space-y-1">
       {folders.map((f) => {
         const parts = f.path.split("/");
-        return (
-          <li key={f.path}>
+        const content = (
+          <>
             <div className="flex items-baseline justify-between gap-3 text-sm">
               <span className="min-w-0 truncate" title={f.path}>
                 <span className="text-muted-foreground">{parts.slice(0, -1).join(" / ")}</span>
@@ -78,6 +79,21 @@ export function FolderBars({ folders }: { folders: FolderStat[] }) {
             <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
               <div className="h-full rounded-full bg-chart-1" style={{ width: `${(f.bytes / max) * 100}%` }} />
             </div>
+          </>
+        );
+        return (
+          <li key={f.path}>
+            {onSelect ? (
+              <button
+                onClick={() => onSelect(f.path)}
+                className="block w-full rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+                aria-label={`Ordner ${parts.at(-1)} öffnen, ${formatBytes(f.bytes)}`}
+              >
+                {content}
+              </button>
+            ) : (
+              <div className="px-2 py-1.5">{content}</div>
+            )}
           </li>
         );
       })}
@@ -162,7 +178,8 @@ interface TrendRow {
 
 export function TrendChart({ data }: { data: Snapshot[] }) {
   const rows: TrendRow[] = data.map((d) => ({ t: Date.parse(d.at), used: d.used, total: d.total, deleted: d.deleted }));
-  const total = rows.at(-1)?.total ?? 0;
+  // the 25 TB maximum of sites without a limit of their own would only flatten the curve
+  const total = siteLimit(rows.at(-1)) ?? 0;
   return (
     <ChartContainer config={trendConfig} className="aspect-auto h-60 w-full">
       <AreaChart data={rows} margin={{ top: 12, right: 8, left: 4, bottom: 0 }}>
@@ -206,12 +223,13 @@ export function TrendChart({ data }: { data: Snapshot[] }) {
           content={({ active, payload }) => {
             const d = active ? (payload?.[0]?.payload as TrendRow | undefined) : undefined;
             if (!d) return null;
+            const limit = siteLimit(d);
             return (
               <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
                 <div className="font-medium">{formatDate(new Date(d.t).toISOString())}</div>
                 <div className="mt-1 flex items-center gap-1.5 tabular">
                   <span className="size-2 rounded-[2px] bg-chart-1" />
-                  {formatBytes(d.used)} belegt · {formatPercent(d.used / Math.max(1, d.total))}
+                  {formatBytes(d.used)} belegt{limit ? ` · ${formatPercent(d.used / limit)}` : ""}
                 </div>
                 {d.deleted > 0 && <div className="mt-0.5 text-muted-foreground tabular">davon {formatBytes(d.deleted)} im Papierkorb</div>}
               </div>

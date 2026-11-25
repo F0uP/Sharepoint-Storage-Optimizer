@@ -1,4 +1,6 @@
 import { toast } from "sonner";
+import { backupSegments, type BackupLayout } from "./backup";
+import type { BackupCopy } from "./csv";
 import { demoTrend } from "./demo";
 import { desktopBridge, type CompressQuality } from "./desktop";
 import { OFFICE_EXT } from "./file-types";
@@ -418,16 +420,21 @@ export function canUseDesktopFeatures() {
   return Boolean(desktopBridge());
 }
 
-/** Downloads the files into a local folder (keeping the folder structure), then deletes what was saved. */
+/**
+ * Downloads the files into a local folder – laid out as chosen, with their original modification date and a
+ * table of contents – then deletes what was saved.
+ */
 export async function backupAndDeleteAction(
   files: SpFile[],
-  { folder, permanent }: { folder: string; permanent: boolean },
+  { folder, permanent, layout = "site" }: { folder: string; permanent: boolean; layout?: BackupLayout },
   onProgress?: (phase: "download" | "delete", done: number, total: number) => void,
 ) {
   const bridge = desktopBridge();
   if (!bridge) throw new Error("Nur in der Desktop-App verfügbar.");
-  const { mode } = useApp.getState();
+  const { mode, site, scan } = useApp.getState();
+  const siteName = site?.name ?? scan?.site.name ?? "Site";
   const saved: SpFile[] = [];
+  const copies: BackupCopy[] = [];
   const failed: BulkResult["failed"] = [];
 
   for (let i = 0; i < files.length; i += 20) {
@@ -439,11 +446,16 @@ export async function backupAndDeleteAction(
         failed.push({ id: f.id, error: "Download-Link nicht verfügbar" });
         return [];
       }
-      return [{ id: f.id, url, relativePath: `${f.path}/${f.name}`, size: mode === "live" ? f.size : undefined }];
+      const relativePath = backupSegments(f, layout, siteName).join("/");
+      return [{ id: f.id, url, relativePath, size: mode === "live" ? f.size : undefined, modified: f.modified }];
     });
     const res = await bridge.downloadFiles(folder, jobs);
     const ok = new Set(res.succeeded);
-    saved.push(...chunk.filter((f) => ok.has(f.id)));
+    for (const f of chunk) {
+      if (!ok.has(f.id)) continue;
+      saved.push(f);
+      copies.push({ file: f, site: siteName, local: res.paths?.[f.id] ?? backupSegments(f, layout, siteName).join("/") });
+    }
     failed.push(...res.failed);
     onProgress?.("download", Math.min(i + chunk.length, files.length), files.length);
   }
@@ -455,9 +467,18 @@ export async function backupAndDeleteAction(
   }
   if (!saved.length) return { succeeded: [], failed };
 
+  // the copies are complete – a missing table of contents is no reason to keep the originals
+  let index: string | undefined;
+  try {
+    const { backupIndexCsv } = await import("./csv");
+    index = await bridge.writeBackupIndex(folder, backupIndexCsv(copies));
+  } catch (e) {
+    toast.warning("Inhaltsverzeichnis konnte nicht geschrieben werden", { description: errorMessage(e) });
+  }
+
   const startedAt = new Date();
   const result = await source().deleteFiles(saved, permanent, (d, t) => onProgress?.("delete", d, t));
-  applyDeletion(saved, result, permanent, "backup", startedAt, `Gesichert in ${folder}`);
+  applyDeletion(saved, result, permanent, "backup", startedAt, `Gesichert in ${folder}${index ? ` · Inhaltsverzeichnis: ${index}` : ""}`);
   return { succeeded: result.succeeded, failed: [...failed, ...result.failed] };
 }
 

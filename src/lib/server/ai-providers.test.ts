@@ -120,4 +120,13 @@ describe("buildPrompt", () => {
     expect(prompt).toContain("0|512.0|2020-01-01|video||dup|Lib/a.mp4");
     expect(prompt).toContain("1|1.0|2024-01-01|document|10.0||Lib/b.docx");
   });
+
+  it("states the used storage without a limit when the site has none of its own", () => {
+    const stats = { totalFiles: 0, totalBytes: 0, byCategory: [] };
+    const pooled = buildPrompt({ siteName: "X", stats: { ...stats, quotaUsed: 2 * 1024 ** 4 }, files: [] });
+    expect(pooled).toContain("Belegt: 2048.00 GB (kein eigenes Site-Limit");
+    expect(pooled).not.toContain("Kontingent");
+    const limited = buildPrompt({ siteName: "X", stats: { ...stats, quotaUsed: 1024 ** 3, quotaTotal: 4 * 1024 ** 3 }, files: [] });
+    expect(limited).toContain("Kontingent: 1.00 von 4.00 GB belegt");
+  });
 });

@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { Background } from "./background.mjs";
-import { downloadAll, downloadTo, resolveInside, uniquePath, type DownloadJob } from "./backup.mjs";
+import { downloadAll, downloadTo, resolveInside, uniquePath, writeIndex, type DownloadJob } from "./backup.mjs";
 import { compressImage, compressVideo, findFfmpeg, loadSharp, uploadToSession, type Quality } from "./media.mjs";
 import { readSettings, writeSettings } from "./settings-store.mjs";
 import { consumeHiddenRestart, Updates } from "./updater.mjs";
@@ -361,6 +361,11 @@ function registerIpc() {
   handle("backup:download", async (folder: string, jobs: DownloadJob[]) => {
     assertApproved(folder);
     return downloadAll(folder, jobs.slice(0, 500), progress("download"));
+  });
+  handle("backup:index", async (folder: string, content: string) => {
+    assertApproved(folder);
+    if (typeof content !== "string" || content.length > 256 * 1024 ** 2) throw new Error("Ungültiges Inhaltsverzeichnis");
+    return writeIndex(folder, content);
   });
 
   handle("media:status", async () => {

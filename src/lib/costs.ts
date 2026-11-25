@@ -1,3 +1,4 @@
+import { siteLimit } from "./quota";
 import type { Settings } from "./settings";
 import type { Snapshot } from "./trend";
 
@@ -24,6 +25,8 @@ export type Forecast =
   | { status: "insufficient" }
   | { status: "full"; growthPerMonth: number }
   | { status: "stable"; growthPerMonth: number }
+  /** growing, but the site has no limit of its own – it fills the shared storage of the tenant */
+  | { status: "pooled"; growthPerMonth: number }
   | { status: "growing"; growthPerMonth: number; monthsLeft: number; fullAt: string };
 
 /**
@@ -50,10 +53,12 @@ export function forecast(trend: Snapshot[], now = Date.now()): Forecast {
   const perDay = den ? num / den : 0;
   const growthPerMonth = perDay * MONTH_DAYS;
 
-  if (last.total > 0 && last.used >= last.total) return { status: "full", growthPerMonth };
+  const limit = siteLimit(last);
+  if (limit && last.used >= limit) return { status: "full", growthPerMonth };
   // less than ~50 MB per month counts as stable
-  if (perDay <= (50 * 1024 ** 2) / MONTH_DAYS || !last.total) return { status: "stable", growthPerMonth };
-  const days = (last.total - last.used) / perDay;
+  if (perDay <= (50 * 1024 ** 2) / MONTH_DAYS) return { status: "stable", growthPerMonth };
+  if (!limit) return { status: "pooled", growthPerMonth };
+  const days = (limit - last.used) / perDay;
   return {
     status: "growing",
     growthPerMonth,
@@ -73,6 +78,8 @@ export function describeForecast(f: Forecast): string {
       return "Das Kontingent ist bereits ausgeschöpft.";
     case "stable":
       return "Der Speicher wächst derzeit kaum.";
+    case "pooled":
+      return "Kein eigenes Site-Limit – das Wachstum geht vom gemeinsamen Speicher des Mandanten ab.";
     case "growing": {
       const months = Math.round(f.monthsLeft);
       const when = monthYear.format(new Date(f.fullAt));

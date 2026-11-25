@@ -72,6 +72,8 @@ Direkt über die Microsoft Graph API · mit KI-Empfehlungen von OpenAI oder Gemi
   (und auf Wunsch Unbeantwortetes nach Fristablauf) landet automatisch im Papierkorb
 - **Automatische Aufräum-Jobs** – Regeln täglich oder wöchentlich ausführen: nur berichten, in den Papierkorb oder Besitzer fragen
 - **PDF-Bericht** mit Kennzahlen, Trend, Einsparmöglichkeiten und Maßnahmen; CSV-Export jeder Liste
+- **Ordner-Explorer** – alle Ordner nach Größe (inkl. Unterordnern), Ebene für Ebene oder per Suche; pro Ordner ein
+  **Ordnerbericht** als PDF (Dateitypen, Datenalter, Einsparpotenzial, Unterordner, Bearbeiter) und die Dateiliste
 
 **Absichern**
 
@@ -82,7 +84,8 @@ Direkt über die Microsoft Graph API · mit KI-Empfehlungen von OpenAI oder Gemi
 
 **Nur in der Desktop-App**
 
-- **Lokal sichern & löschen** – auf eine externe Platte oder ein NAS, mit Ordnerstruktur und Größenprüfung
+- **Lokal sichern & löschen** – auf eine externe Platte oder ein NAS; wahlweise mit komplettem SharePoint-Pfad, ab der
+  Bibliothek oder ohne Ordner (mit Vorschau), Original-Änderungsdatum, Größenprüfung und Inhaltsverzeichnis (CSV)
 - **Medien komprimieren** – Videos (H.264) und Bilder ersetzen die Originale in SharePoint, gleicher Name, gleiche Links
 - **Hintergrund-Prüfung** im Infobereich mit Benachrichtigung, wenn eine Site voll wird; automatische Updates
 

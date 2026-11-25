@@ -14,6 +14,7 @@ import { UserMenu } from "./user-menu";
 import { ThemeToggle } from "./theme-toggle";
 import { openSite, errorMessage } from "@/lib/actions";
 import { formatBytes, formatNumber, formatPercent } from "@/lib/format";
+import { quotaUsage, siteLimit } from "@/lib/quota";
 import { getSource } from "@/lib/source";
 import { useApp } from "@/lib/store";
 import type { Quota, SiteRef } from "@/lib/types";
@@ -180,7 +181,7 @@ export function SitePicker() {
           {sorted?.map((site) => {
             const quota = quotas.get(site.id);
             const loaded = quotas.has(site.id);
-            const usage = quota && quota.total > 0 ? quota.used / quota.total : 0;
+            const usage = quotaUsage(quota);
             return (
               <button
                 key={site.id}
@@ -201,12 +202,19 @@ export function SitePicker() {
                     <>
                       <div className="flex items-baseline justify-between gap-2 text-xs tabular">
                         <span className="font-medium">{formatBytes(quota.used)}</span>
-                        <span className="text-muted-foreground">{formatPercent(usage)}</span>
+                        {usage !== undefined && <span className="text-muted-foreground">{formatPercent(usage)}</span>}
                       </div>
-                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted" title={`${formatBytes(quota.used)} von ${formatBytes(quota.total)}`}>
+                      <div
+                        className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"
+                        title={
+                          usage !== undefined
+                            ? `${formatBytes(quota.used)} von ${formatBytes(quota.total)}`
+                            : `${formatBytes(quota.used)} – kein eigenes Limit, gemeinsamer Speicher des Mandanten`
+                        }
+                      >
                         <div
                           className="h-full rounded-full"
-                          style={{ width: `${Math.max(2, (quota.used / maxUsed) * 100)}%`, background: usageColor(usage) }}
+                          style={{ width: `${Math.max(2, (quota.used / maxUsed) * 100)}%`, background: usageColor(usage ?? 0) }}
                         />
                       </div>
                     </>
@@ -222,6 +230,8 @@ export function SitePicker() {
         {known.length > 0 && (
           <p className="mt-3 text-xs text-muted-foreground">
             Balkenlänge = belegter Speicher im Vergleich der Sites, Farbe = Auslastung des Kontingents (orange ab 75 %, rot ab 90 %).
+            {known.some((q) => siteLimit(q) === undefined) &&
+              " Sites ohne Prozentangabe haben kein eigenes Limit und teilen sich den Speicher des Mandanten."}
           </p>
         )}
         </>

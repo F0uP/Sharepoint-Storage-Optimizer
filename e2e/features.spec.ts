@@ -37,6 +37,33 @@ test("costs, forecast and previews", async ({ page }) => {
   await expect(page.locator('table img[src^="data:image/svg+xml"]').first()).toBeVisible();
 });
 
+test("all folders can be explored, reported on and opened as a file list", async ({ page }) => {
+  await openDemo(page);
+  await page.getByRole("button", { name: "Alle Ordner" }).click();
+  const panel = page.getByRole("dialog", { name: "Ordner" });
+  const libraries = panel.getByRole("list", { name: "Bibliotheken" });
+  await expect(libraries.getByRole("listitem")).toHaveCount(3);
+
+  // drill down: the folder shows its size and offers a report of its own
+  await libraries.getByRole("button", { name: /^Dokumente öffnen/ }).click();
+  await expect(panel.getByRole("navigation", { name: "Ordnerpfad" }).getByRole("button", { name: "Dokumente" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(panel.getByRole("list", { name: "Unterordner von Dokumente" }).getByRole("listitem").first()).toBeVisible();
+  const download = page.waitForEvent("download");
+  await panel.getByRole("button", { name: "Ordnerbericht", exact: true }).click();
+  expect((await download).suggestedFilename()).toMatch(/^Ordnerbericht-marketing-kommunikation-dokumente-\d{4}-\d{2}-\d{2}\.pdf$/);
+  await expect(page.getByText("Bericht für „Dokumente“ erstellt")).toBeVisible();
+
+  // search across all levels, then list the files of one folder
+  await panel.getByLabel("Ordner suchen").fill("Archiv");
+  await panel.getByRole("list", { name: "Suchergebnisse" }).getByRole("button", { name: "Dateien in Archiv anzeigen" }).first().click();
+  await expect(panel).toBeHidden();
+  await expect(page.getByRole("button", { name: /^Ordnerfilter .+\/Archiv entfernen$/ })).toBeVisible();
+  await expect(page.locator("table tbody tr").first()).toContainText("/Archiv");
+});
+
 test("records under retention are skipped when deleting", async ({ page }) => {
   await openDemo(page);
   await page.getByRole("button", { name: "Dateien", exact: true }).first().click();

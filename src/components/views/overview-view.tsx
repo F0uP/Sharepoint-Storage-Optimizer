@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   ArrowRightIcon,
   CircleCheckIcon,
@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "../page-header";
 import { RecycleBinButton } from "../recycle-bin-button";
+import { FolderExplorer } from "../folder-explorer";
 import { INSIGHT_ICONS } from "../insight-icons";
 import { AgeChart, FolderBars, StorageSplit, TrendChart } from "../overview/charts";
 import { useInsights } from "@/hooks/use-insights";
@@ -25,6 +26,7 @@ import { CATEGORY_META } from "@/lib/file-types";
 import { describeForecast, forecast, pricePerGb, yearlyCost } from "@/lib/costs";
 import { formatBytes, formatCurrency, formatDate, formatNumber, formatPercent } from "@/lib/format";
 import { useSettings } from "@/lib/settings";
+import { quotaUsage } from "@/lib/quota";
 import { restorableFiles, totalFreed } from "@/lib/history";
 import { trendDelta } from "@/lib/trend";
 import { useApp } from "@/lib/store";
@@ -71,6 +73,7 @@ export function OverviewView() {
   const delta = trendDelta(trend);
   const price = pricePerGb(useSettings((s) => s.settings));
   const prediction = useMemo(() => forecast(trend), [trend]);
+  const [explorer, setExplorer] = useState<{ open: boolean; start: string | null }>({ open: false, start: null });
   const quota = scan.quota;
 
   const categories = useMemo(() => categoryStats(scan.files), [scan.files]);
@@ -80,8 +83,8 @@ export function OverviewView() {
   const scannedBytes = useMemo(() => scan.files.reduce((s, f) => s + f.size, 0), [scan.files]);
 
   const versionInsight = insights.find((i) => i.id === "versions");
-  const usage = quota && quota.total > 0 ? quota.used / quota.total : 0;
-  const usageColor = usage > 0.9 ? "var(--destructive)" : usage > 0.75 ? "var(--warning)" : "var(--foreground)";
+  const usage = quotaUsage(quota);
+  const usageColor = usage === undefined ? undefined : usage > 0.9 ? "var(--destructive)" : usage > 0.75 ? "var(--warning)" : "var(--foreground)";
   const quickWins = insights
     .filter((i) => i.savings > 0)
     .toSorted((a, b) => b.savings - a.savings)
@@ -104,9 +107,15 @@ export function OverviewView() {
           label="Belegter Speicher"
           icon={DatabaseIcon}
           value={quota ? formatBytes(quota.used) : formatBytes(scannedBytes)}
-          sub={quota ? `von ${formatBytes(quota.total)} · ${formatBytes(quota.remaining)} frei` : "Kontingent nicht verfügbar"}
+          sub={
+            !quota
+              ? "Kontingent nicht verfügbar"
+              : usage !== undefined
+                ? `von ${formatBytes(quota.total)} · ${formatBytes(quota.remaining)} frei`
+                : "Kein eigenes Speicherlimit"
+          }
         >
-          {quota && (
+          {usage !== undefined ? (
             <div>
               <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                 <div className="h-full rounded-full" style={{ width: `${Math.min(100, usage * 100)}%`, background: usageColor }} />
@@ -115,6 +124,13 @@ export function OverviewView() {
                 {formatPercent(usage)} belegt{usage > 0.9 ? " · kritisch" : usage > 0.75 ? " · wird knapp" : ""}
               </div>
             </div>
+          ) : (
+            quota && (
+              <p className="text-xs text-pretty text-muted-foreground" data-testid="pooled-quota">
+                Die Site teilt sich den Speicher des Mandanten (1 TB + 10 GB je Lizenz + Zukauf). Wie viel davon noch frei ist,
+                zeigt das SharePoint Admin Center.
+              </p>
+            )
           )}
         </Stat>
 
@@ -217,12 +233,18 @@ export function OverviewView() {
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Größte Ordner</CardTitle>
-            <CardDescription>Nach belegtem Speicher</CardDescription>
+            <CardDescription>Klicke auf einen Ordner für Details und Bericht.</CardDescription>
+            <CardAction>
+              <Button variant="ghost" size="sm" onClick={() => setExplorer({ open: true, start: null })}>
+                Alle Ordner <ArrowRightIcon />
+              </Button>
+            </CardAction>
           </CardHeader>
           <CardContent>
-            <FolderBars folders={folders} />
+            <FolderBars folders={folders} onSelect={(path) => setExplorer({ open: true, start: path })} />
           </CardContent>
         </Card>
+        <FolderExplorer open={explorer.open} start={explorer.start} onOpenChange={(open) => setExplorer((e) => ({ ...e, open }))} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">

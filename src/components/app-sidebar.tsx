@@ -29,6 +29,7 @@ import { Logo } from "./logo";
 import { UserMenu } from "./user-menu";
 import { useInsights } from "@/hooks/use-insights";
 import { formatBytes, formatNumber, formatPercent } from "@/lib/format";
+import { quotaUsage } from "@/lib/quota";
 import { useReviews } from "@/lib/reviews";
 import { useApp, type View } from "@/lib/store";
 
@@ -66,7 +67,7 @@ export function AppSidebar() {
     s.rounds.filter((r) => r.demo === (mode === "demo")).reduce((n, r) => n + r.requests.filter((q) => q.state === "pending").length, 0),
   );
   const quota = scan.quota;
-  const usage = quota && quota.total > 0 ? quota.used / quota.total : 0;
+  const usage = quotaUsage(quota);
 
   const badges: Partial<Record<View, string>> = {
     files: formatNumber(scan.files.length),
@@ -110,20 +111,28 @@ export function AppSidebar() {
           >
             <div className="flex items-baseline justify-between text-xs">
               <span className="font-medium">Speicher</span>
-              <span className="text-muted-foreground tabular">{formatPercent(usage)}</span>
+              {usage !== undefined && <span className="text-muted-foreground tabular">{formatPercent(usage)}</span>}
             </div>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full"
-                style={{
-                  width: `${Math.min(100, usage * 100)}%`,
-                  background: usage > 0.9 ? "var(--destructive)" : usage > 0.75 ? "var(--warning)" : "var(--foreground)",
-                }}
-              />
-            </div>
-            <div className="mt-2 text-xs text-muted-foreground tabular">
-              {formatBytes(quota.used)} von {formatBytes(quota.total)}
-            </div>
+            {usage !== undefined ? (
+              <>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${Math.min(100, usage * 100)}%`,
+                      background: usage > 0.9 ? "var(--destructive)" : usage > 0.75 ? "var(--warning)" : "var(--foreground)",
+                    }}
+                  />
+                </div>
+                <div className="mt-2 text-xs text-muted-foreground tabular">
+                  {formatBytes(quota.used)} von {formatBytes(quota.total)}
+                </div>
+              </>
+            ) : (
+              <div className="mt-1 text-xs text-muted-foreground tabular">
+                <span className="font-medium text-foreground">{formatBytes(quota.used)}</span> belegt · ohne eigenes Limit
+              </div>
+            )}
             {(cleanup.freedBytes > 0 || cleanup.recycledBytes > 0) && (
               <div className="mt-3 flex items-start gap-2 border-t pt-3 text-xs">
                 <CircleCheckIcon className="mt-px size-3.5 shrink-0 text-success" />

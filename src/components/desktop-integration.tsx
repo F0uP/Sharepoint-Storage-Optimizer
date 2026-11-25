@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { desktopBridge, type UpdateStatus } from "@/lib/desktop";
 import { formatBytes, formatPercent } from "@/lib/format";
 import { hasLiveSession } from "@/lib/auth";
+import { quotaUsage } from "@/lib/quota";
 import { useSettings } from "@/lib/settings";
 import { getSource } from "@/lib/source";
 import { useApp } from "@/lib/store";
@@ -28,7 +29,9 @@ export async function checkWatchedQuotas() {
     if (!quota) continue;
     const trend = await recordSnapshot(site, quota);
     if (useApp.getState().site?.id === site.id) useApp.getState().setTrend(trend);
-    if (quota.total > 0 && quota.used / quota.total >= threshold) critical.push({ name: site.name, ...quota });
+    // sites without a limit of their own cannot run full on their own – Graph does not reveal the tenant pool
+    const usage = quotaUsage(quota);
+    if (usage !== undefined && usage >= threshold) critical.push({ name: site.name, ...quota });
   }
   if (!critical.length) return;
   const [first] = critical.toSorted((a, b) => b.used / b.total - a.used / a.total);

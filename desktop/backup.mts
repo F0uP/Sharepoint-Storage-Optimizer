@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs";
-import { access, mkdir, rename, rm, stat } from "node:fs/promises";
+import { access, mkdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -15,11 +15,15 @@ export interface DownloadJob {
   url: string;
   relativePath: string;
   size?: number;
+  /** last change in SharePoint (ISO) – becomes the modification date of the copy */
+  modified?: string;
 }
 
 export interface DownloadResult {
   succeeded: string[];
   failed: { id: string; error: string }[];
+  /** where each saved file ended up, relative to the chosen folder (may differ: "Bericht (2).docx") */
+  paths: Record<string, string>;
 }
 
 const INVALID_CHARS = /[<>:"|?*\x00-\x1f\\]/g;
@@ -80,7 +84,12 @@ export function isAllowedSource(url: string): boolean {
  * declares wins over `expectedSize`: SharePoint writes metadata into Office files on download, so they
  * can be larger than the size Graph reports.
  */
-export async function downloadTo(url: string, target: string, expectedSize?: number): Promise<{ path: string; bytes: number }> {
+export async function downloadTo(
+  url: string,
+  target: string,
+  expectedSize?: number,
+  modified?: Date,
+): Promise<{ path: string; bytes: number }> {
   if (!isAllowedSource(url)) throw new Error("Download-Quelle nicht erlaubt");
   const res = await fetch(url);
   if (!res.ok || !res.body) throw new Error(`Download fehlgeschlagen (HTTP ${res.status})`);
@@ -96,11 +105,35 @@ export async function downloadTo(url: string, target: string, expectedSize?: num
       throw new Error(`Unvollständig: ${size} statt ${expected} Bytes`);
     }
     await rename(part, final);
+    if (modified) {
+      // the copy shows when the file was last changed, not when it was saved – some network drives refuse that
+      await utimes(final, new Date(), modified).catch(() => {});
+    }
     return { path: final, bytes: size };
   } catch (error) {
     await rm(part, { force: true });
     throw error;
   }
+}
+
+function validDate(value: unknown): Date | undefined {
+  if (typeof value !== "string") return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * Writes the table of contents of a backup ("Sicherung 2026-11-25 14-30.csv") into the chosen folder and
+ * returns its path relative to it. Never overwrites an earlier one.
+ */
+export async function writeIndex(base: string, content: string, now = new Date()): Promise<string> {
+  const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}`;
+  const root = path.resolve(base);
+  const target = await uniquePath(resolveInside(root, `Sicherung ${stamp}.csv`));
+  await writeFile(target, content, "utf8");
+  return path.relative(root, target);
 }
 
 export async function downloadAll(
@@ -109,14 +142,16 @@ export async function downloadAll(
   onProgress?: (done: number, total: number) => void,
   concurrency = 3,
 ): Promise<DownloadResult> {
-  const result: DownloadResult = { succeeded: [], failed: [] };
+  const result: DownloadResult = { succeeded: [], failed: [], paths: {} };
+  const root = path.resolve(base);
   const queue = [...jobs];
   let done = 0;
   const worker = async () => {
     for (let job = queue.shift(); job; job = queue.shift()) {
       try {
-        await downloadTo(job.url, resolveInside(base, job.relativePath), job.size);
+        const saved = await downloadTo(job.url, resolveInside(root, job.relativePath), job.size, validDate(job.modified));
         result.succeeded.push(job.id);
+        result.paths[job.id] = path.relative(root, saved.path);
       } catch (error) {
         result.failed.push({ id: job.id, error: error instanceof Error ? error.message : String(error) });
       }
