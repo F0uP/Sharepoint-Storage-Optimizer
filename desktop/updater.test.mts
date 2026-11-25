@@ -19,7 +19,15 @@ const autoUpdater = Object.assign(new EventEmitter(), {
 });
 vi.mock("electron-updater", () => ({ autoUpdater }));
 
+// on macOS the updater asks codesign how the app is signed – in tests that would inspect the node binary
+const signedByDeveloperId = { status: 0, stderr: "Authority=Developer ID Application: Test" };
+const spawnSync = vi.fn(() => signedByDeveloperId);
+vi.mock("node:child_process", () => ({ spawnSync }));
+
 const { consumeHiddenRestart, fileLogger, Updates } = await import("./updater.mjs");
+
+const platform = process.platform;
+const setPlatform = (value: NodeJS.Platform) => Object.defineProperty(process, "platform", { value, configurable: true });
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -28,9 +36,11 @@ beforeEach(() => {
   autoUpdater.removeAllListeners();
   autoUpdater.checkForUpdates.mockClear();
   autoUpdater.quitAndInstall.mockClear();
+  spawnSync.mockClear();
 });
 afterEach(() => {
   vi.useRealTimers();
+  setPlatform(platform);
   rmSync(path.join(dir, "restart-hidden"), { force: true });
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -84,6 +94,25 @@ describe("Updates", () => {
     expect(consumeHiddenRestart(dir)).toBe(true);
     // only once
     expect(consumeHiddenRestart(dir)).toBe(false);
+  });
+
+  it("installs automatically on properly signed macOS builds", () => {
+    setPlatform("darwin");
+    started();
+    expect(spawnSync).toHaveBeenCalledWith("codesign", expect.any(Array), expect.any(Object));
+    expect(autoUpdater.autoDownload).toBe(true);
+  });
+
+  it("only points to the download page on ad-hoc signed macOS builds", async () => {
+    setPlatform("darwin");
+    spawnSync.mockReturnValueOnce({ status: 0, stderr: "Signature=adhoc" });
+    const { updates } = started();
+    expect(autoUpdater.autoDownload).toBe(false);
+    autoUpdater.emit("update-available", { version: "1.1.0" });
+    expect(updates.status).toMatchObject({ state: "available", mode: "notify", version: "1.1.0" });
+    // nothing is downloaded, so a later check may look again
+    await updates.check();
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
   it("stays off without an update feed", async () => {
