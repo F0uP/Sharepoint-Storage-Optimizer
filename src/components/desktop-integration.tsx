@@ -45,7 +45,7 @@ function showUpdate(status: UpdateStatus) {
   if (status.state === "ready") {
     toast("Update bereit", {
       id: "app-update",
-      description: `Version ${status.version} wird beim nächsten Start installiert.`,
+      description: `Version ${status.version} ist geladen. Sonst wird sie beim Beenden der App installiert.`,
       duration: Infinity,
       action: { label: "Jetzt neu starten", onClick: () => void bridge?.installUpdate() },
     });
@@ -67,6 +67,8 @@ export function DesktopIntegration() {
       checkWatchedQuotas().catch((e) => console.warn("Hintergrund-Prüfung fehlgeschlagen", e));
     });
     const offUpdate = bridge.on("update", (payload) => showUpdate(payload as UpdateStatus));
+    // an update may have finished before this page (re)loaded – the event alone would be missed
+    bridge.updateStatus?.().then(showUpdate).catch(() => {});
     return () => {
       offCheck();
       offUpdate();

@@ -82,7 +82,8 @@ export interface Insight {
   savings: number;
 }
 
-const JUNK_PATTERNS = [/^~\$/, /\.tmp$/i, /^thumbs\.db$/i, /^\.ds_store$/i, /^desktop\.ini$/i, /\.bak$/i, /\.old$/i, /\.crdownload$/i, /\.part$/i, /^~.*\.tmp$/i];
+/** Office lock files, temp, system and backup leftovers – one expression, tested once per file. */
+const JUNK = /^~\$|\.tmp$|^thumbs\.db$|^\.ds_store$|^desktop\.ini$|\.bak$|\.old$|\.crdownload$|\.part$/i;
 
 const RECORDING_NAME = /(meeting recording|besprechungsaufzeichnung|besprechungsaufnahme|aufzeichnung der besprechung)/i;
 const RECORDING_FOLDER = /(^|\/)(recordings|aufzeichnungen)(\/|$)/i;
@@ -101,51 +102,84 @@ function insight(id: InsightId, title: string, description: string, rows: Insigh
   return { id, title, description, action, rows, savings: rows.reduce((s, r) => s + r.bytes, 0) };
 }
 
+/** Adds a file to its hash bucket; a single file is stored as is (most hashes are unique). */
+function addToBucket(buckets: Map<string, SpFile | SpFile[]>, f: SpFile) {
+  const bucket = buckets.get(f.hash!);
+  if (!bucket) buckets.set(f.hash!, f);
+  else if (Array.isArray(bucket)) bucket.push(f);
+  else buckets.set(f.hash!, [bucket, f]);
+}
+
+/** Same text → same string: a large site would otherwise create hundreds of thousands of identical notes. */
+function memoNote(make: (n: number) => string) {
+  const notes = new Map<number, string>();
+  return (n: number) => {
+    let note = notes.get(n);
+    if (note === undefined) notes.set(n, (note = make(n)));
+    return note;
+  };
+}
+
+/**
+ * Rule-based findings. One pass over all files – sites can hold a million of them, and the result is
+ * recomputed whenever the file list changes.
+ */
 export function computeInsights(files: SpFile[], now = Date.now()): Insight[] {
+  const staleNote = memoNote((years) => `Seit ${years} Jahren unverändert`);
+  const recordedNote = memoNote((days) => `Aufgezeichnet vor ${formatNumber(days)} Tagen`);
+  const versionsNote = memoNote((count) => `${formatNumber(count)} Versionen`);
   // duplicates: identical content hash + size → keep the oldest copy
-  const groups = new Map<string, SpFile[]>();
+  const buckets = new Map<string, SpFile | SpFile[]>();
+  const recordings: InsightRow[] = [];
+  const videos: InsightRow[] = [];
+  const images: InsightRow[] = [];
+  const stale: InsightRow[] = [];
+  const archives: InsightRow[] = [];
+  const junk: InsightRow[] = [];
+  const versions: InsightRow[] = [];
+
   for (const f of files) {
-    if (!f.hash || f.size < 1024) continue;
-    const key = `${f.hash}:${f.size}`;
-    const g = groups.get(key);
-    if (g) g.push(f);
-    else groups.set(key, [f]);
+    if (f.hash && f.size >= 1024) addToBucket(buckets, f);
+
+    if (f.category === "video") {
+      if (isTeamsRecording(f)) {
+        const days = Math.floor((now - Date.parse(f.created)) / 864e5);
+        recordings.push({ file: f, bytes: f.size, note: days >= 1 ? recordedNote(days) : undefined });
+      } else if (f.size >= 100 * MB) {
+        videos.push({ file: f, bytes: f.size, note: f.size >= 1024 * MB ? "Komprimieren spart oft 60–80 %" : undefined });
+      }
+    } else if (f.category === "image" && (f.size >= 15 * MB || (RAW_IMAGE_EXT.has(f.ext) && f.size >= 5 * MB))) {
+      images.push({ file: f, bytes: f.size, note: RAW_IMAGE_EXT.has(f.ext) ? `RAW/Arbeitsdatei (.${f.ext})` : undefined });
+    }
+
+    if (f.size >= 10 * MB) {
+      const age = ageInYears(f.modified, now);
+      if (age >= 2) stale.push({ file: f, bytes: f.size, note: staleNote(Math.floor(age)) });
+      if (f.category === "archive" || INSTALLER_EXT.has(f.ext)) {
+        archives.push({ file: f, bytes: f.size, note: INSTALLER_EXT.has(f.ext) ? "Installationsdatei" : "Archiv" });
+      }
+    }
+
+    if (JUNK.test(f.name)) junk.push({ file: f, bytes: f.size, note: f.name.startsWith("~$") ? "Office-Sperrdatei" : "Temporär / System" });
+    if ((f.versionBytes ?? 0) > 0) versions.push({ file: f, bytes: f.versionBytes!, note: versionsNote(f.versionCount ?? 0) });
   }
+
   const duplicateRows: InsightRow[] = [];
-  for (const g of groups.values()) {
-    if (g.length < 2) continue;
-    const [original, ...copies] = g.toSorted((a, b) => Date.parse(a.created) - Date.parse(b.created));
-    for (const c of copies) duplicateRows.push({ file: c, bytes: c.size, note: `Original: ${original.path}/${original.name}` });
+  for (const bucket of buckets.values()) {
+    if (!Array.isArray(bucket)) continue;
+    // the same hash with a different size is a different file
+    const bySize = new Map<number, SpFile[]>();
+    for (const f of bucket) {
+      const same = bySize.get(f.size);
+      if (same) same.push(f);
+      else bySize.set(f.size, [f]);
+    }
+    for (const g of bySize.values()) {
+      if (g.length < 2) continue;
+      const [original, ...copies] = g.toSorted((a, b) => Date.parse(a.created) - Date.parse(b.created));
+      for (const c of copies) duplicateRows.push({ file: c, bytes: c.size, note: `Original: ${original.path}/${original.name}` });
+    }
   }
-
-  const recordings = files.filter(isTeamsRecording).map((f) => {
-    const days = Math.floor((now - Date.parse(f.created)) / 864e5);
-    return { file: f, bytes: f.size, note: days >= 1 ? `Aufgezeichnet vor ${formatNumber(days)} Tagen` : undefined };
-  });
-
-  const videos = files
-    .filter((f) => f.category === "video" && f.size >= 100 * MB && !isTeamsRecording(f))
-    .map((f) => ({ file: f, bytes: f.size, note: f.size >= 1024 * MB ? "Komprimieren spart oft 60–80 %" : undefined }));
-
-  const images = files
-    .filter((f) => f.category === "image" && (f.size >= 15 * MB || (RAW_IMAGE_EXT.has(f.ext) && f.size >= 5 * MB)))
-    .map((f) => ({ file: f, bytes: f.size, note: RAW_IMAGE_EXT.has(f.ext) ? `RAW/Arbeitsdatei (.${f.ext})` : undefined }));
-
-  const stale = files
-    .filter((f) => f.size >= 10 * MB && ageInYears(f.modified, now) >= 2)
-    .map((f) => ({ file: f, bytes: f.size, note: `Seit ${Math.floor(ageInYears(f.modified, now))} Jahren unverändert` }));
-
-  const archives = files
-    .filter((f) => (f.category === "archive" || INSTALLER_EXT.has(f.ext)) && f.size >= 10 * MB)
-    .map((f) => ({ file: f, bytes: f.size, note: INSTALLER_EXT.has(f.ext) ? "Installationsdatei" : "Archiv" }));
-
-  const junk = files
-    .filter((f) => JUNK_PATTERNS.some((p) => p.test(f.name)))
-    .map((f) => ({ file: f, bytes: f.size, note: f.name.startsWith("~$") ? "Office-Sperrdatei" : "Temporär / System" }));
-
-  const versions = files
-    .filter((f) => (f.versionBytes ?? 0) > 0)
-    .map((f) => ({ file: f, bytes: f.versionBytes!, note: `${formatNumber(f.versionCount ?? 0)} Versionen` }));
 
   return [
     insight("duplicates", "Doppelte Dateien", "Identischer Inhalt an mehreren Orten. Das jeweils älteste Exemplar bleibt erhalten.", duplicateRows),
@@ -182,16 +216,57 @@ const LOW_RISK: InsightId[] = ["duplicates", "junk", "versions"];
 
 /** Total reclaimable space without double counting files that appear in several insights. */
 export function potential(insights: Insight[], quota?: Quota): PotentialSummary {
-  const fileIds = new Map<string, number>();
+  const counted = new Set<string>();
+  let fileBytes = 0;
   let versionBytes = 0;
   for (const i of insights) {
     for (const r of i.rows) {
       if (i.action === "versions") versionBytes += r.bytes;
-      else fileIds.set(r.file.id, r.file.size);
+      else if (!counted.has(r.file.id)) {
+        counted.add(r.file.id);
+        fileBytes += r.file.size;
+      }
     }
   }
-  const fileBytes = [...fileIds.values()].reduce((s, b) => s + b, 0);
   const recycleBin = quota?.deleted ?? 0;
   const safeBytes = insights.filter((i) => LOW_RISK.includes(i.id)).reduce((s, i) => s + i.savings, 0) + recycleBin;
-  return { bytes: fileBytes + versionBytes + recycleBin, files: fileIds.size, recycleBin, safeBytes };
+  return { bytes: fileBytes + versionBytes + recycleBin, files: counted.size, recycleBin, safeBytes };
+}
+
+/**
+ * The `count` largest items (largest first; equal sizes keep their order) – without sorting a whole site.
+ * A min-heap of `count` entries: O(n log count) instead of O(n log n).
+ */
+export function largest<T>(items: Iterable<T>, count: number, size: (item: T) => number, keep: (item: T) => boolean = () => true): T[] {
+  type Entry = { item: T; size: number; order: number };
+  // "smaller" = less wanted: smaller size, or later in the input at equal size
+  const less = (a: Entry, b: Entry) => a.size < b.size || (a.size === b.size && a.order > b.order);
+  const heap: Entry[] = [];
+  const swap = (i: number, j: number) => ([heap[i], heap[j]] = [heap[j], heap[i]]);
+  const down = (i: number) => {
+    for (;;) {
+      const l = 2 * i + 1;
+      const r = l + 1;
+      let m = i;
+      if (l < heap.length && less(heap[l], heap[m])) m = l;
+      if (r < heap.length && less(heap[r], heap[m])) m = r;
+      if (m === i) return;
+      swap(i, m);
+      i = m;
+    }
+  };
+  if (count <= 0) return [];
+  let order = 0;
+  for (const item of items) {
+    if (!keep(item)) continue;
+    const entry = { item, size: size(item), order: order++ };
+    if (heap.length < count) {
+      heap.push(entry);
+      for (let i = heap.length - 1; i > 0 && less(heap[i], heap[(i - 1) >> 1]); i = (i - 1) >> 1) swap(i, (i - 1) >> 1);
+    } else if (less(heap[0], entry)) {
+      heap[0] = entry;
+      down(0);
+    }
+  }
+  return heap.sort((a, b) => b.size - a.size || a.order - b.order).map((e) => e.item);
 }

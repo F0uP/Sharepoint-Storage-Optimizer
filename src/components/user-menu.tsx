@@ -28,7 +28,7 @@ import { openSettings } from "./settings-dialog";
 import { requestTour, showWelcome } from "@/lib/onboarding";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import { errorMessage } from "@/lib/actions";
+import { errorMessage, leaveSite } from "@/lib/actions";
 
 export function useCurrentUser() {
   const mode = useApp((s) => s.mode);
@@ -61,6 +61,7 @@ export function UserMenu({ compact, className }: { compact?: boolean; className?
       toast.error("Abmelden fehlgeschlagen", { description: errorMessage(e) });
       return;
     }
+    leaveSite();
     useApp.getState().reset();
   }
 
@@ -110,7 +111,7 @@ export function UserMenu({ compact, className }: { compact?: boolean; className?
           <CompassIcon /> Einführung zeigen
         </DropdownMenuItem>
         {site && (
-          <DropdownMenuItem onSelect={() => useApp.getState().selectSite(null)}>
+          <DropdownMenuItem onSelect={leaveSite}>
             <ArrowLeftRightIcon /> Site wechseln
           </DropdownMenuItem>
         )}

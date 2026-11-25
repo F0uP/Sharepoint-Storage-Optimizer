@@ -100,7 +100,15 @@ describe("AI recommendations", () => {
   });
 
   it("resets everything per site", () => {
+    state().setSyncing({ items: 3 });
     state().selectSite({ id: "other", name: "Andere", webUrl: "https://x.sharepoint.com/sites/o" });
-    expect(state()).toMatchObject({ scan: null, ai: null, view: "overview" });
+    expect(state()).toMatchObject({ scan: null, ai: null, view: "overview", syncing: null });
+  });
+
+  it("takes an updated scan and drops AI advice for files that are gone", async () => {
+    const updated = makeScan([fileB], { scannedAt: "2026-11-25T00:00:00Z" });
+    await state().applySync(updated);
+    expect(state().scan).toBe(updated);
+    expect(state().ai!.recommendations.map((r) => r.fileId)).toEqual([fileB.id]);
   });
 });

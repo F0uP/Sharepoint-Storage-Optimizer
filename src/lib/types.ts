@@ -9,6 +9,8 @@ export interface SpFile {
   ext: string;
   /** folder path including the library name, e.g. "Dokumente/Projekte/2021" */
   path: string;
+  /** id of the parent folder – rebuilds the path when folders are renamed or moved */
+  parentId?: string;
   size: number;
   category: FileCategory;
   mimeType?: string;
@@ -53,6 +55,20 @@ export interface DriveSummary {
   totalBytes: number;
 }
 
+/** Folder of a library – delta responses carry no paths, so paths are rebuilt from the folder tree. */
+export interface FolderEntry {
+  id: string;
+  name: string;
+  parentId?: string;
+  root?: boolean;
+}
+
+/** Where the next scan continues: per library the delta link and the folder tree. */
+export interface ScanSync {
+  v: 1;
+  drives: { id: string; deltaLink: string; folders: FolderEntry[] }[];
+}
+
 export interface ScanResult {
   site: SiteRef;
   scannedAt: string;
@@ -60,6 +76,10 @@ export interface ScanResult {
   drives: DriveSummary[];
   files: SpFile[];
   versionsScannedAt?: string;
+  /** missing in demo data and in caches of older versions – the next scan then reads everything */
+  sync?: ScanSync;
+  /** interim state while the site is still being read – figures are preliminary, never cached */
+  partial?: boolean;
 }
 
 export interface ScanProgress {
@@ -67,6 +87,12 @@ export interface ScanProgress {
   driveIndex: number;
   driveCount: number;
   items: number;
+  /** "full" = complete inventory, "delta" = only the changes since the last scan */
+  kind?: "full" | "delta";
+  /** items an interrupted scan had already captured – it continues from there */
+  resumed?: number;
+  /** temporary problem the scan is waiting out (throttling, connection lost) */
+  waiting?: { reason: string; until: number };
 }
 
 export interface BulkResult {

@@ -20,7 +20,7 @@ import { Background } from "./background.mjs";
 import { downloadAll, downloadTo, resolveInside, uniquePath, type DownloadJob } from "./backup.mjs";
 import { compressImage, compressVideo, findFfmpeg, loadSharp, uploadToSession, type Quality } from "./media.mjs";
 import { readSettings, writeSettings } from "./settings-store.mjs";
-import { Updates } from "./updater.mjs";
+import { consumeHiddenRestart, Updates } from "./updater.mjs";
 
 /**
  * Desktop shell: runs the bundled Next.js server (standalone output) in a utility process on
@@ -105,7 +105,20 @@ const background = new Background(
   () => app.quit(),
   () => send("watch-check", null),
 );
-const updates = new Updates((status) => send("update", status));
+const updates = new Updates(
+  (status) => send("update", status),
+  (version) => {
+    // from the tray menu: a hidden app returns to the tray after the restart
+    background.setUpdate({ version, install: () => updates.install({ hidden: !mainWindow?.isVisible() }) });
+    // a visible window shows the update in the app itself
+    if (!mainWindow?.isVisible() || mainWindow.isMinimized()) {
+      background.notify(
+        "Update bereit",
+        `${version ? `Version ${version}` : "Das Update"} wird installiert, sobald du die App beendest – oder jetzt über das Symbol im Infobereich.`,
+      );
+    }
+  },
+);
 
 /* ------------------------------------------------------------------ server */
 
@@ -279,7 +292,15 @@ function createWindow(): BrowserWindow {
     });
   }
   win.on("close", (event) => {
-    if (!quitting) background.handleClose(event);
+    if (quitting) return;
+    // closing to the tray is the moment to install a downloaded update – the app comes back in the tray
+    if (background.enabled && updates.ready) {
+      event.preventDefault();
+      win.hide();
+      updates.install({ hidden: true });
+      return;
+    }
+    background.handleClose(event);
   });
   win.on("closed", () => {
     mainWindow = null;
@@ -397,6 +418,7 @@ function registerIpc() {
 
   handle("update:check", () => updates.check());
   handle("update:install", () => updates.install());
+  handle("update:status", () => updates.status);
 }
 
 /* ---------------------------------------------------------------- lifecycle */
@@ -445,7 +467,9 @@ async function start() {
   hardenSession();
   registerIpc();
 
-  startInTray = startedAtLogin() && (await readSettings()).desktopBackground === "on";
+  // after an update installed from the tray, the new version returns to the tray as well
+  const restartedFromTray = consumeHiddenRestart();
+  startInTray = (startedAtLogin() || restartedFromTray) && (await readSettings()).desktopBackground === "on";
   mainWindow = createWindow();
   // data: URL instead of file:// – the file protocol has no extra privileges (fuse), so it can't read app.asar
   const loading = await readFile(path.join(app.getAppPath(), "loading.html"), "utf8");

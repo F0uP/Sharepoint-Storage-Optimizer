@@ -2,16 +2,24 @@ import { toast } from "sonner";
 import { demoTrend } from "./demo";
 import { desktopBridge, type CompressQuality } from "./desktop";
 import { OFFICE_EXT } from "./file-types";
-import { formatBytes, formatNumber } from "./format";
+import { formatBytes, formatDate, formatNumber } from "./format";
 import { createEntry, loadHistory, restorableFiles, type HistoryEntry, type HistoryKind } from "./history";
+import { isAbortError } from "./retry";
+import { clearCheckpoint, hasCheckpoint } from "./scan-checkpoint";
+import { mergeScan, type ScanChanges } from "./site-scan";
 import { getSource } from "./source";
-import { loadCached, useApp } from "./store";
+import { loadCached, saveScan, useApp } from "./store";
 import { loadTrend, recordSnapshot } from "./trend";
 import type { BulkResult, LibraryVersionSetting, ScanResult, SiteRef, SpFile } from "./types";
 
 type Progress = (done: number, total: number) => void;
 
+/** the interactive full scan (scan screen) */
 let scanController: AbortController | null = null;
+/** the background update of the shown scan */
+let syncController: AbortController | null = null;
+/** settles when the running scan has let go of its checkpoint */
+let scanTask: Promise<void> | null = null;
 
 function source() {
   const { mode } = useApp.getState();
@@ -41,40 +49,192 @@ async function loadSiteData(site: SiteRef, scan: ScanResult, fresh: boolean) {
   if (useApp.getState().site?.id === site.id) useApp.getState().setSiteData({ history, trend });
 }
 
-/** Opens a site: uses the cached scan if available (live mode) unless a fresh scan is forced. */
-export async function openSite(site: SiteRef, force = false) {
+/** Stops a running scan and background update and waits until the scan has released its checkpoint. */
+async function stopScans() {
+  scanController?.abort();
+  syncController?.abort();
+  scanController = syncController = null;
+  await scanTask;
+}
+
+/**
+ * Opens a site. Live: a cached scan is shown right away and brought up to date in the background (only the
+ * changes are fetched). Without a cache – or with `full` – the site is read completely; an interrupted
+ * complete read continues where it stopped, unless `full` asks for a fresh start.
+ */
+export async function openSite(site: SiteRef, full = false) {
+  await stopScans();
   const store = useApp.getState();
   store.selectSite(site);
+  const live = store.mode === "live";
 
-  if (!force && store.mode === "live") {
+  if (live && !full) {
     const cached = await loadCached(site.id);
+    if (useApp.getState().site?.id !== site.id) return;
     if (cached.scan) {
-      store.setScan(cached.scan, cached.ai ?? null);
+      void useApp.getState().setScan(cached.scan, cached.ai ?? null);
       void loadSiteData(site, cached.scan, false);
+      void refreshSite({ quiet: true });
       return;
     }
   }
+  if (live && full) await clearCheckpoint(site.id);
 
-  scanController?.abort();
   const controller = new AbortController();
   scanController = controller;
-  store.setProgress({ driveIndex: 0, driveCount: 0, items: 0 });
+  useApp.getState().setProgress({ driveIndex: 0, driveCount: 0, items: 0 });
+  const task = fullScan(site, controller, live);
+  scanTask = task;
+  await task;
+  if (scanTask === task) scanTask = null;
+}
+
+/**
+ * Complete read of a site. Live, the workspace opens with the first interim result and keeps working while
+ * the rest is read in the background; interim results and the final one are merged with what the user did
+ * meanwhile (deleted files do not come back).
+ */
+async function fullScan(site: SiteRef, controller: AbortController, live: boolean) {
+  const current = () => !controller.signal.aborted && useApp.getState().site?.id === site.id;
+  /** the scan result shown last – the base for merging the next one */
+  let shown: ScanResult | null = null;
+  let items = 0;
+
+  /** shows a result; resolves once it is cached (interim results never are) */
+  const show = (next: ScanResult): Promise<boolean> => {
+    const store = useApp.getState();
+    const before = shown;
+    shown = next;
+    if (next.partial) store.setSyncing({ items, full: true });
+    if (before && store.scan) return store.applySync(mergeScan(before, store.scan, next, false).scan);
+    if (next.partial) void loadSiteData(site, next, false);
+    return store.setScan(next);
+  };
 
   try {
-    const result = await source().scanSite(site, (p) => useApp.getState().setProgress(p), controller.signal);
-    if (!controller.signal.aborted) {
-      useApp.getState().setScan(result);
-      void loadSiteData(site, result, true);
-    }
+    const result = await source().scanSite(
+      site,
+      (p) => {
+        if (!current()) return;
+        items = p.items;
+        const store = useApp.getState();
+        // scan screen until the first interim result, then a quiet indicator in the workspace
+        if (store.scan) store.setSyncing({ items: p.items, full: true, waiting: p.waiting });
+        else store.setProgress(p);
+      },
+      controller.signal,
+      { resumable: live, onPartial: live ? (partial) => current() && void show(partial) : undefined },
+    );
+    if (!current()) return;
+    const wasShown = shown !== null;
+    const cached = await show(result);
+    void loadSiteData(site, result, true);
+    if (wasShown) toast.success("Site vollständig eingelesen", { description: `${formatNumber(result.files.length)} Dateien` });
+    // the saved progress is only needed until the result itself is cached
+    if (cached) await clearCheckpoint(site.id);
   } catch (e) {
-    useApp.getState().selectSite(null);
-    if (!controller.signal.aborted) toast.error("Scan fehlgeschlagen", { description: errorMessage(e) });
+    if (!current() || isAbortError(e)) return;
+    const resumable = live && (await hasCheckpoint(site.id));
+    const hint = resumable ? " Der bisherige Fortschritt ist gespeichert – der nächste Versuch setzt dort fort." : "";
+    if (shown) {
+      // interim data stays visible, marked as incomplete
+      toast.error("Einlesen unterbrochen", {
+        description: `${errorMessage(e)} Die angezeigten Zahlen sind unvollständig.${hint}`,
+        action: { label: "Fortsetzen", onClick: () => void openSite(site) },
+        duration: 30_000,
+      });
+    } else {
+      useApp.getState().selectSite(null);
+      toast.error("Scan fehlgeschlagen", {
+        description: `${errorMessage(e)}${hint}`,
+        action: { label: "Erneut versuchen", onClick: () => void openSite(site) },
+        duration: 15_000,
+      });
+    }
+  } finally {
+    if (useApp.getState().site?.id === site.id) useApp.getState().setSyncing(null);
   }
 }
 
-export function cancelScan() {
+/** Back to the site picker – stops a running scan or update; an interrupted scan keeps its progress. */
+export function leaveSite() {
   scanController?.abort();
+  syncController?.abort();
   useApp.getState().selectSite(null);
+}
+
+function describeChanges({ added, changed, removed }: ScanChanges): string {
+  const parts = [
+    added && `${formatNumber(added)} neu`,
+    changed && `${formatNumber(changed)} geändert`,
+    removed && `${formatNumber(removed)} entfernt`,
+  ].filter(Boolean);
+  return parts.length ? `${parts.join(" · ")} (Dateien)` : "Keine Änderungen seit dem letzten Scan.";
+}
+
+/**
+ * Brings the shown scan up to date in the background: only the changes since it are fetched, the user keeps
+ * working meanwhile. If that fails, the shown data stays as it is. `quiet`: no message when nothing changed.
+ */
+export async function refreshSite({ quiet = false }: { quiet?: boolean } = {}) {
+  const { site, scan: base, mode } = useApp.getState();
+  if (!site || !base) return;
+  // demo: generated anew; interrupted complete read: continue it
+  if (mode !== "live" || base.partial) return openSite(site, mode !== "live");
+
+  syncController?.abort();
+  const controller = new AbortController();
+  syncController = controller;
+  const current = () => !controller.signal.aborted && useApp.getState().site?.id === site.id && useApp.getState().scan !== null;
+  useApp.getState().setSyncing({ items: 0, full: !base.sync });
+
+  try {
+    const result = await source().scanSite(
+      site,
+      (p) => {
+        // another site was opened meanwhile – stop fetching
+        if (!current()) return controller.abort();
+        useApp.getState().setSyncing({ items: p.items, full: p.kind === "full", waiting: p.waiting });
+      },
+      controller.signal,
+      { base },
+    );
+    if (!current()) return;
+    const { scan, changes } = mergeScan(base, useApp.getState().scan!, result);
+    await useApp.getState().applySync(scan);
+    void loadSiteData(site, scan, true);
+    if (!quiet || changes.added + changes.changed + changes.removed > 0) {
+      toast.success("Site aktualisiert", { description: describeChanges(changes) });
+    }
+  } catch (e) {
+    if (!current() || isAbortError(e)) return;
+    toast.error("Aktualisierung fehlgeschlagen", {
+      description: `${errorMessage(e)} Angezeigt wird weiter der Stand vom ${formatDate(base.scannedAt)}.`,
+      action: { label: "Erneut versuchen", onClick: () => void refreshSite() },
+      duration: 15_000,
+    });
+  } finally {
+    if (syncController === controller) {
+      syncController = null;
+      useApp.getState().setSyncing(null);
+    }
+  }
+}
+
+/**
+ * Up-to-date file list of a site for background work (jobs, overall analysis): starts from the shown scan or
+ * the cache and fetches only the changes. Keeps the cache current – or the shown scan, if the site is open.
+ */
+export async function latestScan(site: SiteRef, signal?: AbortSignal): Promise<ScanResult> {
+  const app = useApp.getState();
+  // an interim state (site still being read) is no base – it is incomplete
+  const open = app.mode === "live" && app.site?.id === site.id && app.scan && !app.scan.partial ? app.scan : null;
+  const base = open ?? (await loadCached(site.id)).scan ?? null;
+  const result = await getSource("live").scanSite(site, () => {}, signal, { base });
+  const now = useApp.getState();
+  if (open && now.site?.id === site.id && now.scan) await now.applySync(mergeScan(open, now.scan, result, false).scan);
+  else if (!open) await saveScan(result);
+  return result;
 }
 
 async function refreshQuota() {

@@ -1,6 +1,7 @@
 import * as demo from "./demo";
 import * as live from "./graph";
 import type { ApprovalRequest } from "./graph";
+import type { ScanOptions } from "./site-scan";
 import type {
   BulkResult,
   DriveSummary,
@@ -20,7 +21,8 @@ type Progress = (done: number, total: number) => void;
 export interface DataSource {
   searchSites(query: string): Promise<SiteRef[]>;
   siteQuotas(sites: SiteRef[], onProgress?: Progress): Promise<Map<string, Quota | undefined>>;
-  scanSite(site: SiteRef, onProgress: (p: ScanProgress) => void, signal?: AbortSignal): Promise<ScanResult>;
+  /** see ScanOptions: `base` fetches only changes, `resumable` continues interrupted scans, `onPartial` delivers interim results */
+  scanSite(site: SiteRef, onProgress: (p: ScanProgress) => void, signal?: AbortSignal, options?: Omit<ScanOptions, "signal">): Promise<ScanResult>;
   deleteFiles(files: SpFile[], permanent: boolean, onProgress?: Progress): Promise<BulkResult>;
   restoreFiles(site: SiteRef, files: SpFile[], deletedAfter: string, onProgress?: Progress): Promise<BulkResult>;
   scanVersions(files: SpFile[], onProgress?: Progress): Promise<Map<string, { count: number; bytes: number }>>;

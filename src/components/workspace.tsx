@@ -19,9 +19,11 @@ import { HistoryView } from "./views/history-view";
 import { ReviewsView } from "./views/reviews-view";
 import { ReportButton } from "./report-button";
 import { WorkspaceTour } from "./onboarding/workspace-tour";
-import { openSite } from "@/lib/actions";
-import { formatDate, formatRelative } from "@/lib/format";
-import { useApp, type View } from "@/lib/store";
+import { Spinner } from "@/components/ui/spinner";
+import { WaitingNotice } from "./scan-screen";
+import { refreshSite } from "@/lib/actions";
+import { formatDate, formatNumber, formatRelative } from "@/lib/format";
+import { useApp, type SyncStatus, type View } from "@/lib/store";
 
 const TITLES: Record<View, string> = {
   overview: "Übersicht",
@@ -33,11 +35,27 @@ const TITLES: Record<View, string> = {
   history: "Verlauf",
 };
 
+function SyncIndicator({ syncing }: { syncing: SyncStatus }) {
+  return (
+    <span className="mr-1 flex items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground" role="status">
+      <Spinner className="size-3" />
+      {syncing.waiting ? (
+        <WaitingNotice key={syncing.waiting.until} waiting={syncing.waiting} />
+      ) : syncing.full ? (
+        `Liest Site ein … ${formatNumber(syncing.items)} Elemente`
+      ) : (
+        `Gleicht Änderungen ab …${syncing.items ? ` ${formatNumber(syncing.items)}` : ""}`
+      )}
+    </span>
+  );
+}
+
 export function Workspace() {
   const view = useApp((s) => s.view);
   const scan = useApp((s) => s.scan)!;
   const mode = useApp((s) => s.mode);
   const preset = useApp((s) => s.preset);
+  const syncing = useApp((s) => s.syncing);
 
   return (
     <SidebarProvider>
@@ -70,20 +88,38 @@ export function Workspace() {
               <SearchIcon /> Suchen …
               <Kbd className="ml-auto">Strg K</Kbd>
             </Button>
+            {syncing ? (
+              <SyncIndicator syncing={syncing} />
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="mr-1 hidden text-xs whitespace-nowrap text-muted-foreground xl:block">Stand {formatRelative(scan.scannedAt)}</span>
+                </TooltipTrigger>
+                <TooltipContent>{formatDate(scan.scannedAt)}</TooltipContent>
+              </Tooltip>
+            )}
+            <ReportButton />
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="mr-1 hidden text-xs whitespace-nowrap text-muted-foreground xl:block">Gescannt {formatRelative(scan.scannedAt)}</span>
+                <Button variant="outline" size="sm" onClick={() => void refreshSite()} disabled={Boolean(syncing)} aria-label="Site aktualisieren">
+                  <RefreshCwIcon /> <span className="hidden xl:inline">Aktualisieren</span>
+                </Button>
               </TooltipTrigger>
-              <TooltipContent>{formatDate(scan.scannedAt)}</TooltipContent>
+              <TooltipContent>
+                {mode === "live" ? "Holt nur die Änderungen seit dem letzten Scan" : "Erzeugt die Demo-Daten neu"}
+              </TooltipContent>
             </Tooltip>
-            <ReportButton />
-            <Button variant="outline" size="sm" onClick={() => openSite(scan.site, true)} aria-label="Neu scannen">
-              <RefreshCwIcon /> <span className="hidden xl:inline">Neu scannen</span>
-            </Button>
             <ThemeToggle />
           </div>
         </header>
 
+        {scan.partial && (
+          <div className="border-b bg-muted/40 px-4 py-2 text-xs text-pretty text-muted-foreground sm:px-6" role="status">
+            {syncing
+              ? "Die Site wird noch im Hintergrund eingelesen – die Zahlen sind vorläufig und wachsen mit. Du kannst schon loslegen."
+              : "Das Einlesen wurde unterbrochen – die Zahlen sind unvollständig. „Aktualisieren“ setzt es fort."}
+          </div>
+        )}
         <div className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:py-8">
           {view === "overview" && <OverviewView />}
           {view === "files" && <FilesView key={JSON.stringify(preset)} />}

@@ -25,6 +25,7 @@ import { FileTable, type FileRow } from "../file-table";
 import { PageHeader } from "../page-header";
 import { openSettings } from "../settings-dialog";
 import { useAiProviders } from "@/hooks/use-ai-providers";
+import { useInsights } from "@/hooks/use-insights";
 import { runAiAnalysis, selectCandidates, type AiRetry } from "@/lib/ai";
 import type { ProviderId } from "@/lib/ai-config";
 import { apiKeyOf, useSettings } from "@/lib/settings";
@@ -105,7 +106,8 @@ export function AiView() {
   const [action, setAction] = useState<AiAction>("delete");
   const configured = providers.length > 0;
 
-  const candidateCount = useMemo(() => selectCandidates(scan).files.length, [scan]);
+  const { insights } = useInsights();
+  const candidateCount = useMemo(() => selectCandidates(scan, undefined, insights).files.length, [scan, insights]);
   const activeProvider = providers.find((p) => p.id === choice) ?? providers[0];
 
   async function analyze() {

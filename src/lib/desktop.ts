@@ -77,6 +77,8 @@ export interface DesktopBridge {
   notify(title: string, body: string): Promise<void>;
   checkForUpdates(): Promise<UpdateStatus>;
   installUpdate(): Promise<void>;
+  /** current state without a new check (e.g. an update that finished downloading before the page loaded) */
+  updateStatus(): Promise<UpdateStatus>;
   on(event: DesktopEvent, listener: (payload: unknown) => void): () => void;
 }
 

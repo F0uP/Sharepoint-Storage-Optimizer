@@ -1,6 +1,8 @@
 import { create } from "zustand";
+import { toast } from "sonner";
 import { del, get as idbGet, set as idbSet } from "idb-keyval";
 import { addEntry, saveHistory, type HistoryEntry } from "./history";
+import { loadScan, saveScan as writeScanCache } from "./scan-cache";
 import type { Snapshot } from "./trend";
 import type { AiResult, FileCategory, Quota, ScanProgress, ScanResult, SiteRef, SpFile } from "./types";
 
@@ -19,12 +21,21 @@ export interface CleanupStats {
 
 const EMPTY_STATS: CleanupStats = { freedBytes: 0, recycledBytes: 0, files: 0 };
 
+/** Background update of the shown scan (only the changes since it are fetched). */
+export interface SyncStatus {
+  items: number;
+  /** true when no change tracking is available yet and everything is read once more */
+  full?: boolean;
+  waiting?: ScanProgress["waiting"];
+}
+
 interface AppState {
   mode: Mode | null;
   view: View;
   site: SiteRef | null;
   scan: ScanResult | null;
   progress: ScanProgress | null;
+  syncing: SyncStatus | null;
   ai: AiResult | null;
   preset: ViewPreset | null;
   cleanup: CleanupStats;
@@ -37,7 +48,11 @@ interface AppState {
   setView(view: View, preset?: ViewPreset): void;
   selectSite(site: SiteRef | null): void;
   setProgress(progress: ScanProgress | null): void;
-  setScan(scan: ScanResult | null, ai?: AiResult | null): void;
+  setSyncing(syncing: SyncStatus | null): void;
+  /** resolves once the scan is cached (false: not cached – demo mode or storage failed) */
+  setScan(scan: ScanResult | null, ai?: AiResult | null): Promise<boolean>;
+  /** replaces the scan with an updated one (background update), keeping the AI analysis */
+  applySync(scan: ScanResult): Promise<boolean>;
   setQuota(quota: Quota | undefined): void;
   removeFiles(ids: string[], permanent: boolean): void;
   applyVersions(map: Map<string, { count: number; bytes: number }>): void;
@@ -56,24 +71,43 @@ interface AppState {
   reset(): void;
 }
 
-const scanKey = (siteId: string) => `scan:${siteId}`;
 const aiKey = (siteId: string) => `ai:${siteId}`;
 
 export async function loadCached(siteId: string): Promise<{ scan?: ScanResult; ai?: AiResult }> {
   try {
-    const [scan, ai] = await Promise.all([idbGet<ScanResult>(scanKey(siteId)), idbGet<AiResult>(aiKey(siteId))]);
-    return { scan, ai };
+    const [scan, ai] = await Promise.all([loadScan(siteId), idbGet<AiResult>(aiKey(siteId))]);
+    // an unreadable or incomplete cache is treated like none – the site is scanned again
+    return scan ? { scan, ai } : {};
   } catch {
     return {};
   }
 }
 
+let cacheWarningShown = false;
+
+/** Writes a scan to the cache (in chunks); failures (e.g. disk full) are reported once per session. */
+export async function saveScan(scan: ScanResult): Promise<boolean> {
+  try {
+    return await writeScanCache(scan);
+  } catch (e) {
+    console.warn("Scan konnte nicht zwischengespeichert werden", e);
+    if (!cacheWarningShown) {
+      cacheWarningShown = true;
+      toast.warning("Scan konnte nicht zwischengespeichert werden", {
+        description: `Die Daten bleiben bis zum Schließen der App erhalten. ${e instanceof Error ? e.message : ""}`.trim(),
+      });
+    }
+    return false;
+  }
+}
+
 /** Scan results and AI analysis survive a reload (live mode only – demo data is regenerated). */
-function persist(state: AppState) {
-  if (state.mode !== "live" || !state.scan) return;
+function persist(state: AppState): Promise<boolean> {
+  // an interim state must never be mistaken for a complete scan – the finished scan is cached
+  if (state.mode !== "live" || !state.scan || state.scan.partial) return Promise.resolve(false);
   const id = state.scan.site.id;
-  idbSet(scanKey(id), state.scan).catch(() => {});
   (state.ai ? idbSet(aiKey(id), state.ai) : del(aiKey(id))).catch(() => {});
+  return saveScan(state.scan);
 }
 
 function persistHistory(state: AppState) {
@@ -93,6 +127,7 @@ export const useApp = create<AppState>()((set, get) => ({
   site: null,
   scan: null,
   progress: null,
+  syncing: null,
   ai: null,
   preset: null,
   cleanup: EMPTY_STATS,
@@ -102,11 +137,19 @@ export const useApp = create<AppState>()((set, get) => ({
   setMode: (mode) => set({ mode }),
   setView: (view, preset) => set({ view, preset: preset ?? null }),
   selectSite: (site) =>
-    set({ site, scan: null, ai: null, progress: null, view: "overview", cleanup: EMPTY_STATS, history: [], trend: [] }),
+    set({ site, scan: null, ai: null, progress: null, syncing: null, view: "overview", cleanup: EMPTY_STATS, history: [], trend: [] }),
   setProgress: (progress) => set({ progress }),
+  setSyncing: (syncing) => set({ syncing }),
   setScan: (scan, ai = null) => {
     set({ scan, ai, progress: null });
-    persist(get());
+    return persist(get());
+  },
+  applySync: (scan) => {
+    const { ai } = get();
+    const ids = new Set(scan.files.map((f) => f.id));
+    // recommendations for files that no longer exist are dropped
+    set({ scan, ai: ai && { ...ai, recommendations: ai.recommendations.filter((r) => ids.has(r.fileId)) } });
+    return persist(get());
   },
   setQuota: (quota) => {
     const { scan } = get();
@@ -247,6 +290,7 @@ export const useApp = create<AppState>()((set, get) => ({
       site: null,
       scan: null,
       progress: null,
+      syncing: null,
       ai: null,
       view: "overview",
       cleanup: EMPTY_STATS,

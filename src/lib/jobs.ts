@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { toast } from "sonner";
+import { latestScan } from "./actions";
 import { isAppAuth } from "./auth";
 import { generateDemoScan } from "./demo";
 import { desktopBridge } from "./desktop";
@@ -111,7 +112,8 @@ export async function runJob(job: CleanupJob): Promise<JobRun> {
   let run: JobRun;
   try {
     if (!rule) throw new Error("Die Regel gibt es nicht mehr.");
-    const scan = job.demo ? generateDemoScan(job.site) : await source.scanSite(job.site, () => {});
+    // live: cached file list plus the changes since – a job does not read the whole site again
+    const scan = job.demo ? generateDemoScan(job.site) : await latestScan(job.site);
     const matched = matchRule(rule, scan.files, at.getTime()).toSorted((a, b) => b.size - a.size);
     const bytes = matched.reduce((s, f) => s + f.size, 0);
     let candidates = matched.slice(0, job.maxFiles);

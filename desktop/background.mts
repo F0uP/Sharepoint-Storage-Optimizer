@@ -16,6 +16,8 @@ export class Background {
   private timer: NodeJS.Timeout | null = null;
   private firstRun: NodeJS.Timeout | null = null;
   private hintShown = false;
+  /** downloaded update waiting for the restart – offered in the tray menu */
+  private update: { version?: string; install: () => void } | null = null;
   enabled = false;
 
   constructor(
@@ -73,15 +75,32 @@ export class Background {
     if (process.platform === "darwin") icon.setTemplateImage(true);
     this.tray = new Tray(icon);
     this.tray.setToolTip(app.getName());
-    this.tray.setContextMenu(
+    this.buildMenu();
+    this.tray.on("click", () => this.showWindow());
+  }
+
+  private buildMenu() {
+    const update = this.update;
+    this.tray?.setContextMenu(
       Menu.buildFromTemplate([
         { label: "Öffnen", click: () => this.showWindow() },
         { label: "Kontingent jetzt prüfen", click: () => this.sendCheck() },
+        ...(update
+          ? [
+              { type: "separator" as const },
+              { label: `Update${update.version ? ` auf ${update.version}` : ""} installieren und neu starten`, click: update.install },
+            ]
+          : []),
         { type: "separator" },
         { label: "Beenden", click: () => this.quit() },
       ]),
     );
-    this.tray.on("click", () => this.showWindow());
+  }
+
+  /** Offers a downloaded update in the tray menu (null removes the entry). */
+  setUpdate(update: { version?: string; install: () => void } | null) {
+    this.update = update;
+    this.buildMenu();
   }
 
   dispose() {

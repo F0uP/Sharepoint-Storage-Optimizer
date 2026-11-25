@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GB, MB, makeFile } from "../../tests/factories";
-import { ageStats, aiInsight, categoryStats, computeInsights, folderStats, potential } from "./analysis";
+import { ageStats, aiInsight, categoryStats, computeInsights, folderStats, largest, potential } from "./analysis";
 import type { AiResult } from "./types";
 
 const NOW = Date.parse("2026-11-01T00:00:00Z");
@@ -143,5 +143,28 @@ describe("statistics", () => {
       { path: "Lib/B", bytes: 10, count: 1 },
       { path: "Lib/A", bytes: 3, count: 2 },
     ]);
+  });
+});
+
+describe("largest", () => {
+  it("returns the n largest items like a full sort would – equal sizes keep their order", () => {
+    const items = Array.from({ length: 2000 }, (_, i) => ({ id: i, size: (i * 7919) % 101 }));
+    const expected = items.toSorted((a, b) => b.size - a.size).slice(0, 50);
+    expect(largest(items, 50, (x) => x.size)).toEqual(expected);
+    expect(largest(items, 5, (x) => x.size, (x) => x.id % 2 === 0)).toEqual(
+      items.filter((x) => x.id % 2 === 0).toSorted((a, b) => b.size - a.size).slice(0, 5),
+    );
+    expect(largest(items.slice(0, 3), 10, (x) => x.size)).toHaveLength(3);
+    expect(largest(items, 0, (x) => x.size)).toEqual([]);
+  });
+});
+
+describe("computeInsights with the same hash", () => {
+  it("treats files with the same hash but a different size as different files", () => {
+    const a = makeFile({ hash: "x", size: 5 * MB, created: "2020-01-01T00:00:00Z" });
+    const b = makeFile({ hash: "x", size: 5 * MB, created: "2021-01-01T00:00:00Z" });
+    const c = makeFile({ hash: "x", size: 6 * MB });
+    const duplicates = computeInsights([b, c, a]).find((i) => i.id === "duplicates")!;
+    expect(duplicates.rows.map((r) => r.file.id)).toEqual([b.id]);
   });
 });

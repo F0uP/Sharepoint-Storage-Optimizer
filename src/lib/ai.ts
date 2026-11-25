@@ -1,5 +1,5 @@
 import { AI_KEY_HEADER, type ProviderId } from "./ai-config";
-import { categoryStats, computeInsights } from "./analysis";
+import { categoryStats, computeInsights, largest, type Insight } from "./analysis";
 import { ageInYears } from "./format";
 import type { AiAction, AiPriority, AiResult, ScanResult, SpFile } from "./types";
 
@@ -9,8 +9,12 @@ const MAX_CANDIDATES = 700;
  * Picks the files most worth looking at: the largest ones, duplicates, big version histories,
  * old files and junk. Only metadata (path, size, date, type) leaves the browser.
  */
-export function selectCandidates(scan: ScanResult, now = Date.parse(scan.scannedAt)): { files: SpFile[]; duplicates: Set<string> } {
-  const insights = computeInsights(scan.files, now);
+export function selectCandidates(
+  scan: ScanResult,
+  now = Date.parse(scan.scannedAt),
+  /** already computed for this file list (the views share them) */
+  insights: Insight[] = computeInsights(scan.files, now),
+): { files: SpFile[]; duplicates: Set<string> } {
   const rowsOf = (id: string) => insights.find((i) => i.id === id)?.rows.map((r) => r.file) ?? [];
   const duplicates = new Set(rowsOf("duplicates").map((f) => f.id));
   const picked = new Map<string, SpFile>();
@@ -24,11 +28,12 @@ export function selectCandidates(scan: ScanResult, now = Date.parse(scan.scanned
       }
     }
   };
-  const bySize = scan.files.toSorted((a, b) => b.size - a.size);
-  add(bySize, 380);
+  // only the largest files are needed – no need to sort the whole site
+  add(largest(scan.files, 380, (f) => f.size), 380);
   add(rowsOf("duplicates"), 120);
   add(rowsOf("versions"), 80);
-  add(bySize.filter((f) => ageInYears(f.modified, now) > 3), 80);
+  // enough old files to find 80 that were not picked yet
+  add(largest(scan.files, 80 + MAX_CANDIDATES, (f) => f.size, (f) => ageInYears(f.modified, now) > 3), 80);
   add(rowsOf("junk"), 40);
   return { files: [...picked.values()], duplicates };
 }

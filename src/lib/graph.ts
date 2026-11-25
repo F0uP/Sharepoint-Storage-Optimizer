@@ -1,9 +1,11 @@
 import { Client } from "@microsoft/microsoft-graph-client";
-import type { Drive, DriveItem, Site } from "@microsoft/microsoft-graph-types";
-import { categorize, getExtension } from "./file-types";
+import type { Drive, Site } from "@microsoft/microsoft-graph-types";
 import { appMailSender, CERTIFICATE_REQUIRED, explainSharePointError, getToken, hasCertificate, isAppAuth } from "./auth";
+import type { DeltaPage, LibraryRef } from "./delta";
 import { APPROVAL_SCOPES, ARCHIVE_SCOPES, GRAPH_SCOPES, MAIL_SCOPES, sharePointScopes } from "./msal";
 import { leafNameFilter, matchRecycleItems, type RecycleItem } from "./recycle-bin";
+import { withRetry, type RetryWait } from "./retry";
+import { scanSiteWith, type ScanOptions } from "./site-scan";
 import type {
   BulkResult,
   DriveSummary,
@@ -69,9 +71,26 @@ function toQuota(q: Drive["quota"]): Quota | undefined {
   };
 }
 
-async function listLibraries(siteId: string): Promise<Drive[]> {
-  const res = await graph().api(`/sites/${siteId}/drives`).select("id,name,webUrl,driveType").get();
-  return (res.value as Drive[]).filter((d) => d.driveType === "documentLibrary");
+/** one page of a large library can take a while – a request hanging longer than this is retried */
+const PAGE_TIMEOUT = 120_000;
+
+/** GET with retries; each attempt has its own timeout and stops when the scan is cancelled. */
+function getWithRetry<T>(url: string, signal?: AbortSignal, onWait?: (wait: RetryWait | undefined) => void): Promise<T> {
+  return withRetry(
+    () => {
+      const timeout = AbortSignal.timeout(PAGE_TIMEOUT);
+      return graph()
+        .api(url)
+        .option("signal", signal ? AbortSignal.any([signal, timeout]) : timeout)
+        .get() as Promise<T>;
+    },
+    { signal, onWait },
+  );
+}
+
+async function listLibraries(siteId: string, signal?: AbortSignal): Promise<LibraryRef[]> {
+  const res = await getWithRetry<{ value: Drive[] }>(`/sites/${siteId}/drives?$select=id,name,webUrl,driveType`, signal);
+  return res.value.filter((d) => d.driveType === "documentLibrary").map((d) => ({ id: d.id!, name: d.name ?? "", webUrl: d.webUrl ?? "" }));
 }
 
 export async function getSiteQuota(siteId: string): Promise<Quota | undefined> {
@@ -79,112 +98,26 @@ export async function getSiteQuota(siteId: string): Promise<Quota | undefined> {
   return toQuota(drive.quota);
 }
 
-const DELTA_SELECT = [
-  "id", "name", "size", "file", "folder", "package", "root", "deleted", "image", "video", "audio", "photo",
-  "parentReference", "createdDateTime", "lastModifiedDateTime", "lastModifiedBy", "webUrl",
-].join(",");
-
 /**
- * Enumerates every file of a document library with the delta query –
- * the fastest way to get a complete inventory (one request per ~200–1000 items).
- * Delta responses do not contain paths, so they are rebuilt from the folder hierarchy.
+ * Reads a site with the delta query: the first scan lists everything, later scans (`base`) only the changes.
+ * See site-scan.ts for the logic; here it is wired to Microsoft Graph.
  */
-async function scanDrive(
-  drive: Drive,
-  onItems: (count: number) => void,
-  signal?: AbortSignal,
-): Promise<SpFile[]> {
-  const folders = new Map<string, { name: string; parentId?: string; root: boolean }>();
-  const rawFiles: DriveItem[] = [];
-  let url: string | undefined = `/drives/${drive.id}/root/delta?$select=${DELTA_SELECT}`;
-  let seen = 0;
-
-  while (url) {
-    if (signal?.aborted) throw new DOMException("Scan abgebrochen", "AbortError");
-    const page: { value: DriveItem[]; "@odata.nextLink"?: string } = await graph().api(url).get();
-    for (const item of page.value) {
-      if (item.deleted) continue;
-      if (item.folder || item.package || item.root) {
-        folders.set(item.id!, { name: item.name ?? "", parentId: item.parentReference?.id ?? undefined, root: !!item.root });
-      } else if (item.file) {
-        rawFiles.push(item);
-      }
-    }
-    seen += page.value.length;
-    onItems(seen);
-    url = page["@odata.nextLink"];
-  }
-
-  const pathCache = new Map<string, string>();
-  const folderPath = (id: string | undefined, depth = 0): string => {
-    if (!id || depth > 64) return drive.name!;
-    const cached = pathCache.get(id);
-    if (cached !== undefined) return cached;
-    const f = folders.get(id);
-    const path = !f || f.root ? drive.name! : `${folderPath(f.parentId, depth + 1)}/${f.name}`;
-    pathCache.set(id, path);
-    return path;
-  };
-
-  return rawFiles.map((item) => {
-    const name = item.name ?? "";
-    const hashes = item.file?.hashes;
-    return {
-      id: item.id!,
-      driveId: drive.id!,
-      driveName: drive.name!,
-      name,
-      ext: getExtension(name),
-      path: folderPath(item.parentReference?.id ?? undefined),
-      size: Number(item.size ?? 0),
-      category: categorize(name, item.file?.mimeType ?? undefined, {
-        video: !!item.video,
-        image: !!(item.image || item.photo),
-        audio: !!item.audio,
-      }),
-      mimeType: item.file?.mimeType ?? undefined,
-      created: item.createdDateTime ?? item.lastModifiedDateTime ?? new Date().toISOString(),
-      modified: item.lastModifiedDateTime ?? new Date().toISOString(),
-      modifiedBy: item.lastModifiedBy?.user?.displayName ?? undefined,
-      // SharePoint adds the editor's e-mail to the identity (not part of the generic type)
-      modifiedByEmail: (item.lastModifiedBy?.user as { email?: string } | undefined)?.email ?? undefined,
-      modifiedById: item.lastModifiedBy?.user?.id ?? undefined,
-      webUrl: item.webUrl ?? "",
-      hash: hashes?.quickXorHash ?? hashes?.sha256Hash ?? hashes?.sha1Hash ?? undefined,
-    } satisfies SpFile;
-  });
-}
-
-export async function scanSite(
+export function scanSite(
   site: SiteRef,
   onProgress: (p: ScanProgress) => void,
   signal?: AbortSignal,
+  options: Omit<ScanOptions, "signal"> = {},
 ): Promise<ScanResult> {
-  const [libraries, quota] = await Promise.all([listLibraries(site.id), getSiteQuota(site.id).catch(() => undefined)]);
-  const files: SpFile[] = [];
-  const drives: DriveSummary[] = [];
-  let total = 0;
-
-  for (const [index, drive] of libraries.entries()) {
-    const before = total;
-    onProgress({ driveName: drive.name ?? "", driveIndex: index, driveCount: libraries.length, items: total });
-    const driveFiles = await scanDrive(
-      drive,
-      (n) => onProgress({ driveName: drive.name ?? "", driveIndex: index, driveCount: libraries.length, items: before + n }),
-      signal,
-    );
-    total = before + driveFiles.length;
-    files.push(...driveFiles);
-    drives.push({
-      id: drive.id!,
-      name: drive.name ?? "",
-      webUrl: drive.webUrl ?? "",
-      fileCount: driveFiles.length,
-      totalBytes: driveFiles.reduce((s, f) => s + f.size, 0),
-    });
-  }
-
-  return { site, quota, drives, files, scannedAt: new Date().toISOString() };
+  return scanSiteWith(
+    {
+      libraries: (siteId) => listLibraries(siteId, signal),
+      quota: async (siteId) => toQuota((await getWithRetry<Drive>(`/sites/${siteId}/drive?$select=id,quota`, signal)).quota),
+      fetchPage: (url, onWait, pageSignal) => getWithRetry<DeltaPage>(url, pageSignal, onWait),
+    },
+    site,
+    onProgress,
+    { ...options, signal },
+  );
 }
 
 /* ---------------------------------------------------------------- batching */

@@ -1,8 +1,8 @@
 import { create } from "zustand";
 import { get as idbGet, set as idbSet } from "idb-keyval";
-import { computeInsights, potential, type InsightId } from "./analysis";
+import { computeInsights, largest, potential, type InsightId } from "./analysis";
+import { latestScan } from "./actions";
 import { generateDemoScan } from "./demo";
-import { getSource } from "./source";
 import type { Quota, ScanResult, SiteRef } from "./types";
 
 /**
@@ -51,11 +51,14 @@ export function summarizeScan(scan: ScanResult, now = Date.parse(scan.scannedAt)
   const insights = computeInsights(scan.files, now);
   const pot = potential(insights, scan.quota);
   const lastActivity = scan.files.reduce((max, f) => (f.modified > max ? f.modified : max), "");
-  const index = scan.files
-    .filter((f) => f.hash && f.size >= INDEX_MIN)
-    .toSorted((a, b) => b.size - a.size)
-    .slice(0, INDEX_MAX_PER_SITE)
-    .map((f) => ({ key: `${f.hash}:${f.size}`, siteId: scan.site.id, name: f.name, path: f.path, size: f.size, webUrl: f.webUrl }));
+  const index = largest(scan.files, INDEX_MAX_PER_SITE, (f) => f.size, (f) => Boolean(f.hash) && f.size >= INDEX_MIN).map((f) => ({
+    key: `${f.hash}:${f.size}`,
+    siteId: scan.site.id,
+    name: f.name,
+    path: f.path,
+    size: f.size,
+    webUrl: f.webUrl,
+  }));
   return {
     summary: {
       site: scan.site,
@@ -137,10 +140,9 @@ export async function analyzeTenant(sites: SiteRef[], mode: "live" | "demo") {
     if (ctrl.signal.aborted) break;
     useTenant.setState({ progress: { done: i, total: sites.length, current: site.name } });
     try {
+      // live: sites scanned before only fetch their changes; every result is cached for the next run
       const scan =
-        mode === "demo"
-          ? (await new Promise((r) => setTimeout(r, 180)), generateDemoScan(site))
-          : await getSource("live").scanSite(site, () => {}, ctrl.signal);
+        mode === "demo" ? (await new Promise((r) => setTimeout(r, 180)), generateDemoScan(site)) : await latestScan(site, ctrl.signal);
       const result = summarizeScan(scan);
       summaries.push(result.summary);
       index.push(...result.index);

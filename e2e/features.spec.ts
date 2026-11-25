@@ -62,7 +62,7 @@ test("owners decide in Teams, approved files are deleted", async ({ page }) => {
   await expect(page.getByText(/Besitzer gefragt/)).toBeVisible();
 
   await page.getByRole("button", { name: "Freigaben", exact: true }).first().click();
-  await page.getByRole("button", { name: "Aktualisieren" }).click();
+  await page.getByRole("button", { name: "Aktualisieren", exact: true }).click();
   await expect(page.getByText("Gelöscht", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Behalten", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Wartet auf Antwort in Teams").first()).toBeVisible();

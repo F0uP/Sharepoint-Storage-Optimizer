@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("desktop", {
   discardFile: (tempId: string) => ipcRenderer.invoke("media:discard", tempId),
   checkForUpdates: () => ipcRenderer.invoke("update:check"),
   installUpdate: () => ipcRenderer.invoke("update:install"),
+  updateStatus: () => ipcRenderer.invoke("update:status"),
   on: (event: string, listener: (payload: unknown) => void) => {
     if (!EVENTS.has(event)) throw new Error(`Unbekanntes Ereignis: ${event}`);
     const handler = (_e: IpcRendererEvent, message: { event: string; payload: unknown }) => {

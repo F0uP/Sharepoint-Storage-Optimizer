@@ -34,7 +34,7 @@ import {
 import { openSettings } from "./settings-dialog";
 import { useReport } from "./report-button";
 import { requestTour } from "@/lib/onboarding";
-import { openSite } from "@/lib/actions";
+import { leaveSite, openSite, refreshSite } from "@/lib/actions";
 import { CATEGORY_META } from "@/lib/file-types";
 import { formatBytes } from "@/lib/format";
 import { useApp } from "@/lib/store";
@@ -89,11 +89,12 @@ export function CommandMenu() {
     { id: "history", label: "Verlauf & Rückgängig", icon: ListRestartIcon, run: () => setView("history") },
   ];
   const actions: Entry[] = [
-    { id: "rescan", label: "Neu scannen", icon: RefreshCwIcon, run: () => scan && openSite(scan.site, true) },
+    { id: "refresh", label: "Aktualisieren (nur Änderungen)", icon: RefreshCwIcon, run: () => void refreshSite() },
+    { id: "rescan", label: "Komplett neu scannen", icon: RefreshCwIcon, run: () => scan && openSite(scan.site, true) },
     { id: "versions", label: "Versionsverlauf analysieren", icon: HistoryIcon, run: () => setView("optimize", { insight: "versions" }) },
     { id: "report", label: "Bericht als PDF erstellen", icon: FileDownIcon, run: () => void report.generate() },
     { id: "theme", label: "Farbschema wechseln", icon: SunMoonIcon, run: () => setTheme(resolvedTheme === "dark" ? "light" : "dark") },
-    { id: "site", label: "Site wechseln", icon: ArrowLeftRightIcon, run: () => useApp.getState().selectSite(null) },
+    { id: "site", label: "Site wechseln", icon: ArrowLeftRightIcon, run: leaveSite },
     { id: "settings", label: "Einstellungen", icon: Settings2Icon, run: () => openSettings() },
     { id: "tour", label: "Einstiegstour starten", icon: CompassIcon, run: () => requestTour() },
     { id: "ai-keys", label: "KI-Schlüssel verwalten", icon: KeyRoundIcon, run: () => openSettings("ai") },

@@ -15,12 +15,12 @@ type Patch = (patch: Partial<Settings>) => void;
 
 const UPDATE_TEXT: Record<UpdateStatus["state"], string> = {
   disabled: "Automatische Updates sind für diesen Build nicht eingerichtet.",
-  idle: "",
+  idle: "Updates werden beim Start automatisch gesucht.",
   checking: "Suche nach Updates …",
   none: "Die App ist aktuell.",
   available: "Update verfügbar",
-  downloading: "Update wird geladen …",
-  ready: "Update bereit – wird beim nächsten Neustart installiert.",
+  downloading: "Update wird geladen",
+  ready: "Update bereit – wird spätestens beim Beenden der App installiert.",
   error: "Update-Prüfung fehlgeschlagen",
 };
 
@@ -34,6 +34,9 @@ export function DesktopSettings({ draft, patch }: { draft: Settings; patch: Patc
   useEffect(() => {
     bridge?.appInfo().then(setInfo).catch(() => {});
     bridge?.mediaStatus().then(setMedia).catch(() => {});
+    // live status: download progress and "ready" arrive as events after the check
+    bridge?.updateStatus?.().then(setUpdate).catch(() => {});
+    return bridge?.on("update", (payload) => setUpdate(payload as UpdateStatus));
   }, [bridge]);
 
   async function checkUpdates() {
@@ -140,21 +143,34 @@ export function DesktopSettings({ draft, patch }: { draft: Settings; patch: Patc
               <>
                 {UPDATE_TEXT[update.state]}
                 {update.version && update.state !== "none" ? ` (${update.version})` : ""}
+                {update.state === "downloading" ? (update.percent ? ` … ${update.percent} %` : " …") : ""}
                 {update.message ? ` – ${update.message}` : ""}{" "}
-                {update.releaseUrl && (
+                {update.releaseUrl && update.state !== "ready" && (
                   <a href={update.releaseUrl} target="_blank" rel="noreferrer" className="underline underline-offset-2">
                     Zum Download
                   </a>
                 )}
               </>
             ) : (
-              "Updates werden beim Start automatisch gesucht."
+              UPDATE_TEXT.idle
             )}
           </FieldDescription>
         </FieldContent>
-        <Button type="button" variant="outline" size="sm" onClick={checkUpdates} disabled={checking}>
-          {checking ? <Spinner /> : <RefreshCwIcon />} Prüfen
-        </Button>
+        {update?.state === "ready" ? (
+          <Button type="button" size="sm" onClick={() => void bridge?.installUpdate()}>
+            <RefreshCwIcon /> Jetzt neu starten
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={checkUpdates}
+            disabled={checking || update?.state === "checking" || update?.state === "downloading"}
+          >
+            {checking || update?.state === "checking" ? <Spinner /> : <RefreshCwIcon />} Prüfen
+          </Button>
+        )}
       </Field>
     </FieldGroup>
   );
