@@ -46,9 +46,10 @@ describe("scanSiteWith – first scan", () => {
     const result = await scan();
 
     expect(sorted(result)).toEqual(["Dokumente|Dokumente/Projekte|Plan.pdf|100", "Dokumente|Dokumente|Budget.xlsx|100", "Medien|Medien|Film.mp4|5000"]);
+    // folders without the library root – SharePoint counts them as items, too (completeness check)
     expect(result.drives).toEqual([
-      { ...docs, fileCount: 2, totalBytes: 200 },
-      { ...media, fileCount: 1, totalBytes: 5000 },
+      { ...docs, fileCount: 2, folderCount: 1, totalBytes: 200 },
+      { ...media, fileCount: 1, folderCount: 0, totalBytes: 5000 },
     ]);
     expect(result.quota).toEqual(quota);
     expect(result.sync?.drives.map((d) => [d.id, d.deltaLink, d.folders.length])).toEqual([

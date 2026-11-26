@@ -6,6 +6,7 @@ import { useTheme } from "next-themes";
 import {
   ArrowLeftRightIcon,
   CompassIcon,
+  DatabaseZapIcon,
   FileDownIcon,
   FolderOpenIcon,
   HistoryIcon,
@@ -90,7 +91,7 @@ export function CommandMenu() {
   ];
   const actions: Entry[] = [
     { id: "refresh", label: "Aktualisieren (nur Änderungen)", icon: RefreshCwIcon, run: () => void refreshSite() },
-    { id: "rescan", label: "Komplett neu scannen", icon: RefreshCwIcon, run: () => scan && openSite(scan.site, true) },
+    { id: "rescan", label: "Komplett neu einlesen (ohne Zwischenspeicher)", icon: DatabaseZapIcon, run: () => scan && openSite(scan.site, true) },
     { id: "versions", label: "Versionsverlauf analysieren", icon: HistoryIcon, run: () => setView("optimize", { insight: "versions" }) },
     { id: "report", label: "Bericht als PDF erstellen", icon: FileDownIcon, run: () => void report.generate() },
     { id: "theme", label: "Farbschema wechseln", icon: SunMoonIcon, run: () => setTheme(resolvedTheme === "dark" ? "light" : "dark") },

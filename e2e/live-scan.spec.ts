@@ -62,6 +62,21 @@ async function mockGraph(page: Page) {
     if (url.pathname.endsWith("/sites/s1/drives")) {
       return json({ value: [{ id: "d1", name: "Dokumente", webUrl: "https://contoso.sharepoint.com/sites/vertrieb/Dokumente", driveType: "documentLibrary" }] });
     }
+    // a subsite with a library of its own
+    if (url.pathname.endsWith("/sites/s1/sites")) {
+      return json({ value: [{ id: "s1sub", displayName: "Projekte", webUrl: "https://contoso.sharepoint.com/sites/vertrieb/projekte" }] });
+    }
+    if (url.pathname.endsWith("/sites/s1sub/drives")) {
+      return json({ value: [{ id: "d3", name: "Dokumente", webUrl: "https://contoso.sharepoint.com/sites/vertrieb/projekte/Dokumente", driveType: "documentLibrary" }] });
+    }
+    if (url.pathname.endsWith("/sites/s1sub/sites")) return json({ value: [] });
+    if (url.pathname.endsWith("/drives/d3/root/delta")) {
+      if (url.searchParams.get("token")) return json({ value: [], "@odata.deltaLink": `${GRAPH}/drives/d3/root/delta?token=d3b` });
+      return json({
+        value: [{ id: "r3", name: "root", root: {}, folder: {} }, file("k", "Kunde.pdf", "r3", 3 * MB)],
+        "@odata.deltaLink": `${GRAPH}/drives/d3/root/delta?token=d3a`,
+      });
+    }
     if (url.pathname.endsWith("/sites/s1/drive")) return json({ id: "d1", quota: { total: 1e12, used: 4e11, remaining: 6e11, deleted: 0 } });
     if (url.pathname.endsWith("/drives/d1/root/delta")) {
       const token = url.searchParams.get("token") ?? "start";
@@ -114,6 +129,9 @@ test("a site can be used while it is read, and later only its changes are fetche
   await expect(page.getByText("Site vollständig eingelesen")).toBeVisible();
   await expect(page.getByText(/wird noch im Hintergrund eingelesen/)).toBeHidden();
   await expect(page.getByText("Budget.xlsx")).toBeVisible();
+  // the subsite's library is part of the site – its files carry the subsite in their path
+  await expect(page.getByText("Kunde.pdf")).toBeVisible();
+  await expect(page.getByText("Projekte/Dokumente", { exact: true })).toBeVisible();
   expect(graph.deltaRequests).toEqual(["start", "p2"]);
 
   // open the site again: the cached scan shows at once, only the changes are fetched
@@ -125,4 +143,45 @@ test("a site can be used while it is read, and later only its changes are fetche
   await expect(page.getByText("Neu.pdf")).toBeVisible();
   await expect(page.getByText("Budget.xlsx")).toBeHidden();
   expect(graph.deltaRequests).toEqual(["start", "p2", "d1"]);
+
+  // "Neu einlesen" drops the cache and reads everything again instead of only the changes
+  await page.getByRole("button", { name: "Site komplett neu einlesen" }).click();
+  const confirm = page.getByRole("alertdialog");
+  await expect(confirm).toContainText("bisher 3 Dateien");
+  await confirm.getByRole("button", { name: "Komplett neu einlesen" }).click();
+  await expect(page.getByText("Site vollständig eingelesen")).toBeVisible({ timeout: 30_000 });
+  expect(graph.deltaRequests).toEqual(["start", "p2", "d1", "start", "p2"]);
+  await filesView(page).click();
+  await expect(page.getByText("Budget.xlsx")).toBeVisible();
+});
+
+test("after an update every site is read completely again", async ({ page }) => {
+  test.setTimeout(120_000);
+  const graph = await mockGraph(page);
+  graph.release();
+  await connect(page);
+  await page.getByText("Vertrieb Nord").click();
+  await expect(page.getByText("Site vollständig eingelesen")).toBeVisible({ timeout: 30_000 });
+  expect(graph.deltaRequests).toEqual(["start", "p2"]);
+
+  // the cache was written by an older version
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open("keyval-store");
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const tx = open.result.transaction("keyval", "readwrite");
+          tx.objectStore("keyval").put("0.0.1", "cache-version");
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        };
+      }),
+  );
+  await page.reload();
+  await expect(page.getByText(/Version .+ installiert/)).toBeVisible({ timeout: 30_000 });
+  await page.getByText("Vertrieb Nord").click();
+  await expect(page.getByText("Site vollständig eingelesen")).toBeVisible({ timeout: 30_000 });
+  // no delta round on the old cache – a complete read
+  expect(graph.deltaRequests).toEqual(["start", "p2", "start", "p2"]);
 });

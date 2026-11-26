@@ -88,7 +88,8 @@ export async function signOut() {
   await msal.logoutPopup({ account, mainWindowRedirectUri: window.location.origin });
 }
 
-export async function getAccessToken(scopes: string[]): Promise<string> {
+/** `interactive: false` – background checks must never open a sign-in window; they fail instead. */
+export async function getAccessToken(scopes: string[], { interactive = true }: { interactive?: boolean } = {}): Promise<string> {
   const msal = getMsal();
   await msal.initialize();
   const account = msal.getActiveAccount() ?? msal.getAllAccounts()[0];
@@ -97,7 +98,7 @@ export async function getAccessToken(scopes: string[]): Promise<string> {
     const result = await msal.acquireTokenSilent({ scopes, account });
     return result.accessToken;
   } catch (error) {
-    if (error instanceof InteractionRequiredAuthError) {
+    if (interactive && error instanceof InteractionRequiredAuthError) {
       const result = await msal.acquireTokenPopup({ scopes, account });
       return result.accessToken;
     }

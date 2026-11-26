@@ -21,7 +21,8 @@ import type { DriveSummary, Quota, ScanProgress, ScanResult, ScanSync, SiteRef, 
  */
 
 export interface ScanDeps {
-  libraries(siteId: string): Promise<LibraryRef[]>;
+  /** all document libraries, those of subsites included */
+  libraries(site: SiteRef): Promise<LibraryRef[]>;
   quota(siteId: string): Promise<Quota | undefined>;
   fetchPage(url: string, onWait: (wait: RetryWait | undefined) => void, signal?: AbortSignal): Promise<DeltaPage>;
   openCheckpoint?: typeof openCheckpoint;
@@ -66,7 +67,7 @@ export async function scanSiteWith(
   onProgress: (p: ScanProgress) => void,
   { signal, base, resumable = false, onPartial }: ScanOptions = {},
 ): Promise<ScanResult> {
-  const [libraries, quota] = await Promise.all([deps.libraries(site.id), deps.quota(site.id).catch(() => undefined)]);
+  const [libraries, quota] = await Promise.all([deps.libraries(site), deps.quota(site.id).catch(() => undefined)]);
   const cached = fromBase(base, libraries);
   const context = { deps, site, libraries, quota, cached, onProgress, signal, base, onPartial: cached ? undefined : onPartial };
   if (!resumable || cached) return scanLibraries(context, null);
@@ -90,7 +91,17 @@ interface ScanContext {
 function summarize(state: DriveState, files: SpFile[]): DriveSummary {
   let bytes = 0;
   for (const f of files) bytes += f.size;
-  return { id: state.id, name: state.name, webUrl: state.webUrl, fileCount: files.length, totalBytes: bytes };
+  let folders = 0;
+  for (const f of state.folders.values()) if (!f.root) folders++;
+  return {
+    id: state.id,
+    name: state.name,
+    webUrl: state.webUrl,
+    siteUrl: state.siteUrl,
+    fileCount: files.length,
+    folderCount: folders,
+    totalBytes: bytes,
+  };
 }
 
 /** Interim result from the libraries read so far – nothing is finished or dropped. */

@@ -51,7 +51,11 @@ export interface DriveSummary {
   id: string;
   name: string;
   webUrl: string;
+  /** URL of the (sub)site the library belongs to */
+  siteUrl?: string;
   fileCount: number;
+  /** folders read (without the library root) – SharePoint counts them as items, too */
+  folderCount?: number;
   totalBytes: number;
 }
 
@@ -133,6 +137,8 @@ export interface LibraryVersionSetting {
   driveId: string;
   driveName: string;
   listId: string;
+  /** (sub)site the library belongs to */
+  siteUrl?: string;
   enabled: boolean;
   /** null = no limit configured (SharePoint default is 500) */
   majorLimit: number | null;

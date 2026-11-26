@@ -2,6 +2,7 @@ import { Client } from "@microsoft/microsoft-graph-client";
 import type { Drive, Site } from "@microsoft/microsoft-graph-types";
 import { appMailSender, CERTIFICATE_REQUIRED, explainSharePointError, getToken, hasCertificate, isAppAuth } from "./auth";
 import type { DeltaPage, LibraryRef } from "./delta";
+import { listAllLibraries } from "./libraries";
 import { APPROVAL_SCOPES, ARCHIVE_SCOPES, GRAPH_SCOPES, MAIL_SCOPES, sharePointScopes } from "./msal";
 import { leafNameFilter, matchRecycleItems, type RecycleItem } from "./recycle-bin";
 import { withRetry, type RetryWait } from "./retry";
@@ -88,9 +89,9 @@ function getWithRetry<T>(url: string, signal?: AbortSignal, onWait?: (wait: Retr
   );
 }
 
-async function listLibraries(siteId: string, signal?: AbortSignal): Promise<LibraryRef[]> {
-  const res = await getWithRetry<{ value: Drive[] }>(`/sites/${siteId}/drives?$select=id,name,webUrl,driveType`, signal);
-  return res.value.filter((d) => d.driveType === "documentLibrary").map((d) => ({ id: d.id!, name: d.name ?? "", webUrl: d.webUrl ?? "" }));
+/** All document libraries of the site, those of its subsites included (see libraries.ts). */
+function listLibraries(site: SiteRef, signal?: AbortSignal): Promise<LibraryRef[]> {
+  return listAllLibraries(site, <T,>(url: string) => getWithRetry<T>(url, signal));
 }
 
 export async function getSiteQuota(siteId: string): Promise<Quota | undefined> {
@@ -110,7 +111,7 @@ export function scanSite(
 ): Promise<ScanResult> {
   return scanSiteWith(
     {
-      libraries: (siteId) => listLibraries(siteId, signal),
+      libraries: (target) => listLibraries(target, signal),
       quota: async (siteId) => toQuota((await getWithRetry<Drive>(`/sites/${siteId}/drive?$select=id,quota`, signal)).quota),
       fetchPage: (url, onWait, pageSignal) => getWithRetry<DeltaPage>(url, pageSignal, onWait),
     },
@@ -234,10 +235,12 @@ async function sharePointRest(
   path: string,
   method: "GET" | "POST" | "MERGE" = "POST",
   body?: Record<string, unknown>,
+  /** false for background checks: no sign-in window, the call fails instead */
+  interactive = true,
 ) {
   // SharePoint rejects app-only tokens that were requested with a client secret
   if (isAppAuth() && !hasCertificate()) throw new Error(CERTIFICATE_REQUIRED);
-  const token = await getToken(sharePointScopes(siteUrl));
+  const token = await getToken(sharePointScopes(siteUrl), { interactive });
   const res = await fetch("/api/sharepoint", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -314,16 +317,41 @@ export async function getVersionSettings(site: SiteRef, drives: DriveSummary[]):
   for (const [i, drive] of drives.entries()) {
     const listId = lists.get(String(i))?.body?.id;
     if (typeof listId !== "string") continue;
-    const data = await sharePointRest(site.webUrl, `/_api/web/lists(guid'${listId}')?$select=EnableVersioning,MajorVersionLimit`, "GET");
+    // a library of a subsite is a list of that subsite
+    const siteUrl = drive.siteUrl ?? site.webUrl;
+    const data = await sharePointRest(siteUrl, `/_api/web/lists(guid'${listId}')?$select=EnableVersioning,MajorVersionLimit`, "GET");
     const enabled = Boolean(data.EnableVersioning);
-    out.push({ driveId: drive.id, driveName: drive.name, listId, enabled, majorLimit: enabled ? Number(data.MajorVersionLimit) || null : null });
+    out.push({ driveId: drive.id, driveName: drive.name, listId, siteUrl, enabled, majorLimit: enabled ? Number(data.MajorVersionLimit) || null : null });
+  }
+  return out;
+}
+
+/**
+ * Number of items SharePoint itself counts per library (files and folders, as in "Site contents"). Compared with
+ * what a scan read, it shows whether the scan is complete. Libraries whose count is not available (e.g. app
+ * access without certificate) are missing from the result.
+ */
+export async function libraryItemCounts(site: SiteRef, drives: DriveSummary[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (!drives.length || (isAppAuth() && !hasCertificate())) return out;
+  const lists = await runBatched(drives.map((d, i) => ({ id: String(i), method: "GET" as const, url: `/drives/${d.id}/list?$select=id` })));
+  for (const [i, drive] of drives.entries()) {
+    const listId = lists.get(String(i))?.body?.id;
+    if (typeof listId !== "string") continue;
+    try {
+      const data = await sharePointRest(drive.siteUrl ?? site.webUrl, `/_api/web/lists(guid'${listId}')?$select=ItemCount`, "GET", undefined, false);
+      const count = Number(data.ItemCount);
+      if (Number.isFinite(count)) out.set(drive.id, count);
+    } catch (e) {
+      console.warn(`Elementzahl von „${drive.name}“ nicht verfügbar`, e);
+    }
   }
   return out;
 }
 
 /** Limits the number of major versions a library keeps (applies to new versions). */
 export async function setVersionLimit(site: SiteRef, setting: LibraryVersionSetting, limit: number): Promise<void> {
-  await sharePointRest(site.webUrl, `/_api/web/lists(guid'${setting.listId}')`, "MERGE", {
+  await sharePointRest(setting.siteUrl ?? site.webUrl, `/_api/web/lists(guid'${setting.listId}')`, "MERGE", {
     EnableVersioning: true,
     MajorVersionLimit: limit,
   });
@@ -331,26 +359,37 @@ export async function setVersionLimit(site: SiteRef, setting: LibraryVersionSett
 
 /* ------------------------------------------------------------- restore */
 
-/** Restores files deleted by this app from the recycle bin (matched by name, folder and time). */
+/**
+ * Restores files deleted by this app from the recycle bin (matched by name, folder and time). Each (sub)site
+ * has its own recycle bin – `drives` tells which one a file went to.
+ */
 export async function restoreFiles(
   site: SiteRef,
   files: SpFile[],
   deletedAfter: string,
   onProgress?: (done: number, total: number) => void,
+  drives: DriveSummary[] = [],
 ): Promise<BulkResult> {
+  const webOf = new Map(drives.map((d) => [d.id, d.siteUrl ?? site.webUrl]));
+  const web = (f: SpFile) => webOf.get(f.driveId) ?? site.webUrl;
   const lookup = async (subset: SpFile[]) => {
-    const names = [...new Set(subset.map((f) => f.name))];
-    const items: RecycleItem[] = [];
-    for (let i = 0; i < names.length; i += 10) {
-      const filter = encodeURIComponent(leafNameFilter(names.slice(i, i + 10)));
-      const data = await sharePointRest(
-        site.webUrl,
-        `/_api/web/RecycleBin?$select=Id,LeafName,DirName,Size,DeletedDate&$top=1000&$filter=${filter}`,
-        "GET",
-      );
-      items.push(...((data.value ?? []) as RecycleItem[]));
+    const found = new Map<string, string>();
+    for (const siteUrl of new Set(subset.map(web))) {
+      const inWeb = subset.filter((f) => web(f) === siteUrl);
+      const names = [...new Set(inWeb.map((f) => f.name))];
+      const items: RecycleItem[] = [];
+      for (let i = 0; i < names.length; i += 10) {
+        const filter = encodeURIComponent(leafNameFilter(names.slice(i, i + 10)));
+        const data = await sharePointRest(
+          siteUrl,
+          `/_api/web/RecycleBin?$select=Id,LeafName,DirName,Size,DeletedDate&$top=1000&$filter=${filter}`,
+          "GET",
+        );
+        items.push(...((data.value ?? []) as RecycleItem[]));
+      }
+      for (const [id, itemId] of matchRecycleItems(inWeb, items, deletedAfter)) found.set(id, itemId);
     }
-    return matchRecycleItems(subset, items, deletedAfter);
+    return found;
   };
   // right after deleting, the recycle bin can lag a few seconds behind Graph
   const matches = await lookup(files);
@@ -366,7 +405,7 @@ export async function restoreFiles(
       const id = matches.get(f.id);
       try {
         if (!id) throw new Error("Nicht im Papierkorb gefunden");
-        await sharePointRest(site.webUrl, `/_api/web/RecycleBin('${id}')/Restore()`);
+        await sharePointRest(web(f), `/_api/web/RecycleBin('${id}')/Restore()`);
         result.succeeded.push(f.id);
       } catch (e) {
         result.failed.push({ id: f.id, error: e instanceof Error ? e.message : String(e) });

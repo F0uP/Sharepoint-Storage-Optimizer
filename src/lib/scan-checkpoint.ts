@@ -108,7 +108,7 @@ export async function openCheckpoint(
     resumedItems: restored.size ? index.items : 0,
     drive: (library) => {
       const state = restored.get(library.id);
-      if (state) Object.assign(state, { name: library.name, webUrl: library.webUrl });
+      if (state) Object.assign(state, { name: library.name, webUrl: library.webUrl, siteUrl: library.siteUrl });
       return state;
     },
     async save(state, ops) {

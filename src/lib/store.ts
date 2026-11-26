@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 import { del, get as idbGet, set as idbSet } from "idb-keyval";
+import { clearCachesAfterUpdate } from "./cache-version";
 import { addEntry, saveHistory, type HistoryEntry } from "./history";
 import { loadScan, saveScan as writeScanCache } from "./scan-cache";
 import type { Snapshot } from "./trend";
@@ -81,6 +82,8 @@ const aiKey = (siteId: string) => `ai:${siteId}`;
 
 export async function loadCached(siteId: string): Promise<{ scan?: ScanResult; ai?: AiResult }> {
   try {
+    // never a scan cached by a previous version (resolved once per start)
+    await clearCachesAfterUpdate();
     const [scan, ai] = await Promise.all([loadScan(siteId), idbGet<AiResult>(aiKey(siteId))]);
     // an unreadable or incomplete cache is treated like none – the site is scanned again
     return scan ? { scan, ai } : {};

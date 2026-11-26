@@ -24,7 +24,10 @@ export interface DataSource {
   /** see ScanOptions: `base` fetches only changes, `resumable` continues interrupted scans, `onPartial` delivers interim results */
   scanSite(site: SiteRef, onProgress: (p: ScanProgress) => void, signal?: AbortSignal, options?: Omit<ScanOptions, "signal">): Promise<ScanResult>;
   deleteFiles(files: SpFile[], permanent: boolean, onProgress?: Progress): Promise<BulkResult>;
-  restoreFiles(site: SiteRef, files: SpFile[], deletedAfter: string, onProgress?: Progress): Promise<BulkResult>;
+  /** `drives` tells which (sub)site – and therefore which recycle bin – a file belongs to */
+  restoreFiles(site: SiteRef, files: SpFile[], deletedAfter: string, onProgress?: Progress, drives?: DriveSummary[]): Promise<BulkResult>;
+  /** items (files and folders) SharePoint counts per library – to check a scan for completeness */
+  libraryItemCounts(site: SiteRef, drives: DriveSummary[]): Promise<Map<string, number>>;
   scanVersions(files: SpFile[], onProgress?: Progress): Promise<Map<string, { count: number; bytes: number }>>;
   cleanVersions(files: SpFile[], onProgress?: Progress): Promise<BulkResult>;
   getVersionSettings(site: SiteRef, drives: DriveSummary[]): Promise<LibraryVersionSetting[]>;
@@ -48,6 +51,7 @@ const liveSource: DataSource = {
   scanSite: live.scanSite,
   deleteFiles: live.deleteFiles,
   restoreFiles: live.restoreFiles,
+  libraryItemCounts: live.libraryItemCounts,
   scanVersions: live.scanVersions,
   cleanVersions: live.cleanVersions,
   getVersionSettings: live.getVersionSettings,
@@ -71,6 +75,8 @@ const demoSource: DataSource = {
   scanSite: demo.demoScanSite,
   deleteFiles: demo.demoDeleteFiles,
   restoreFiles: demo.demoRestoreFiles,
+  // the demo is always complete
+  libraryItemCounts: async () => new Map(),
   scanVersions: demo.demoScanVersions,
   cleanVersions: demo.demoCleanVersions,
   getVersionSettings: demo.demoVersionSettings,

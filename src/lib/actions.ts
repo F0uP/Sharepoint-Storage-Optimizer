@@ -1,5 +1,6 @@
 import { toast } from "sonner";
 import { backupSegments, type BackupLayout } from "./backup";
+import { incompleteLibraries } from "./completeness";
 import type { BackupCopy } from "./csv";
 import { demoTrend } from "./demo";
 import { desktopBridge, type CompressQuality } from "./desktop";
@@ -7,6 +8,7 @@ import { OFFICE_EXT } from "./file-types";
 import { formatBytes, formatDate, formatNumber } from "./format";
 import { createEntry, loadHistory, restorableFiles, type HistoryEntry, type HistoryKind } from "./history";
 import { isAbortError } from "./retry";
+import { deleteScan as deleteCachedScan } from "./scan-cache";
 import { clearCheckpoint, hasCheckpoint } from "./scan-checkpoint";
 import { mergeScan, type ScanChanges } from "./site-scan";
 import { getSource } from "./source";
@@ -62,7 +64,8 @@ async function stopScans() {
 /**
  * Opens a site. Live: a cached scan is shown right away and brought up to date in the background (only the
  * changes are fetched). Without a cache – or with `full` – the site is read completely; an interrupted
- * complete read continues where it stopped, unless `full` asks for a fresh start.
+ * complete read continues where it stopped. `full` is a fresh start: the cached scan and any saved progress
+ * of the site are dropped first.
  */
 export async function openSite(site: SiteRef, full = false) {
   await stopScans();
@@ -80,7 +83,10 @@ export async function openSite(site: SiteRef, full = false) {
       return;
     }
   }
-  if (live && full) await clearCheckpoint(site.id);
+  if (live && full) {
+    await Promise.all([clearCheckpoint(site.id), deleteCachedScan(site.id).catch(() => {})]);
+    completenessWarned.delete(site.id);
+  }
 
   const controller = new AbortController();
   scanController = controller;
@@ -132,6 +138,7 @@ async function fullScan(site: SiteRef, controller: AbortController, live: boolea
     const cached = await show(result);
     void loadSiteData(site, result, true);
     if (wasShown) toast.success("Site vollständig eingelesen", { description: `${formatNumber(result.files.length)} Dateien` });
+    void checkCompleteness(site, result, true);
     // the saved progress is only needed until the result itself is cached
     if (cached) await clearCheckpoint(site.id);
   } catch (e) {
@@ -156,6 +163,32 @@ async function fullScan(site: SiteRef, controller: AbortController, live: boolea
   } finally {
     if (useApp.getState().site?.id === site.id) useApp.getState().setSyncing(null);
   }
+}
+
+/** sites already warned about in this session – the warning is not repeated on every update */
+const completenessWarned = new Set<string>();
+
+/**
+ * Compares what was read with the number of items SharePoint counts per library and warns about clear gaps.
+ * `force`: after a complete read the check always reports, after an update only once per session.
+ */
+async function checkCompleteness(site: SiteRef, scan: ScanResult, force: boolean) {
+  if (useApp.getState().mode !== "live" || scan.partial || (!force && completenessWarned.has(site.id))) return;
+  const counts = await source()
+    .libraryItemCounts(site, scan.drives)
+    .catch(() => new Map<string, number>());
+  const gaps = incompleteLibraries(scan.drives, counts);
+  if (!gaps.length || useApp.getState().site?.id !== site.id) return;
+  completenessWarned.add(site.id);
+  const [first] = gaps;
+  const more = gaps.length > 1 ? ` Dazu ${plural(gaps.length - 1, "weitere Bibliothek", "weitere Bibliotheken")}.` : "";
+  toast.warning("Site möglicherweise nicht vollständig eingelesen", {
+    description:
+      `„${first.name}“: SharePoint zählt ${formatNumber(first.expected)} Elemente, eingelesen wurden ${formatNumber(first.read)}.${more}` +
+      " Mögliche Ursachen: fehlende Leserechte auf einzelnen Ordnern oder ein unterbrochener Scan.",
+    action: { label: "Komplett neu einlesen", onClick: () => void openSite(site, true) },
+    duration: 60_000,
+  });
 }
 
 /** Back to the site picker – stops a running scan or update; an interrupted scan keeps its progress. */
@@ -205,6 +238,7 @@ export async function refreshSite({ quiet = false }: { quiet?: boolean } = {}) {
     const { scan, changes } = mergeScan(base, useApp.getState().scan!, result);
     await useApp.getState().applySync(scan);
     void loadSiteData(site, scan, true);
+    void checkCompleteness(site, scan, false);
     if (!quiet || changes.added + changes.changed + changes.removed > 0) {
       toast.success("Site aktualisiert", { description: describeChanges(changes) });
     }
@@ -312,7 +346,7 @@ export async function restoreEntryAction(entryId: string, onProgress?: Progress)
     return;
   }
   try {
-    const result = await source().restoreFiles(site, files, entry.at, onProgress);
+    const result = await source().restoreFiles(site, files, entry.at, onProgress, useApp.getState().scan?.drives);
     const ok = new Set(result.succeeded);
     const restored = files.filter((f) => ok.has(f.id));
     useApp.getState().addFiles(restored);

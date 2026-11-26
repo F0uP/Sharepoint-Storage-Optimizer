@@ -1,6 +1,17 @@
 "use client";
 
-import { RefreshCwIcon, SearchIcon } from "lucide-react";
+import { useState } from "react";
+import { DatabaseZapIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Kbd } from "@/components/ui/kbd";
@@ -21,7 +32,7 @@ import { ReportButton } from "./report-button";
 import { WorkspaceTour } from "./onboarding/workspace-tour";
 import { Spinner } from "@/components/ui/spinner";
 import { WaitingNotice } from "./scan-screen";
-import { refreshSite } from "@/lib/actions";
+import { openSite, refreshSite } from "@/lib/actions";
 import { formatDate, formatNumber, formatRelative } from "@/lib/format";
 import { useApp, type SyncStatus, type View } from "@/lib/store";
 
@@ -47,6 +58,54 @@ function SyncIndicator({ syncing }: { syncing: SyncStatus }) {
         `Gleicht Änderungen ab …${syncing.items ? ` ${formatNumber(syncing.items)}` : ""}`
       )}
     </span>
+  );
+}
+
+/** Reads the whole site again from scratch – cache and saved progress are dropped. */
+function RescanButton({ disabled }: { disabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const site = useApp((s) => s.site);
+  const files = useApp((s) => s.scan?.files.length ?? 0);
+  if (!site) return null;
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="outline" size="sm" onClick={() => setOpen(true)} disabled={disabled} aria-label="Site komplett neu einlesen">
+            <DatabaseZapIcon /> <span className="hidden xl:inline">Neu einlesen</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Liest die ganze Site neu ein – ohne Zwischenspeicher</TooltipContent>
+      </Tooltip>
+      <AlertDialog open={open} onOpenChange={setOpen}>
+        <AlertDialogContent className="sm:max-w-md">
+          <AlertDialogHeader className="flex flex-row items-start gap-4 text-left">
+            <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+              <DatabaseZapIcon className="size-5" />
+            </div>
+            <div className="space-y-1.5">
+              <AlertDialogTitle>Site komplett neu einlesen?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Der Zwischenspeicher von „{site.name}“ wird verworfen und die Site mit allen Bibliotheken und Unterwebsites neu
+                abgerufen{files ? ` (bisher ${formatNumber(files)} Dateien)` : ""}. Bei großen Sites dauert das eine Weile – die Übersicht
+                ist währenddessen schon nutzbar und wächst mit. Verlauf und Speichertrend bleiben erhalten.
+              </AlertDialogDescription>
+            </div>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setOpen(false);
+                void openSite(site, true);
+              }}
+            >
+              Komplett neu einlesen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -109,6 +168,8 @@ export function Workspace() {
                 {mode === "live" ? "Holt nur die Änderungen seit dem letzten Scan" : "Erzeugt die Demo-Daten neu"}
               </TooltipContent>
             </Tooltip>
+            {/* a running background update is simply replaced – only a running complete read blocks it */}
+            {mode === "live" && <RescanButton disabled={Boolean(syncing?.full)} />}
             <ThemeToggle />
           </div>
         </header>

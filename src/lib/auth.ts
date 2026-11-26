@@ -83,8 +83,8 @@ export function resourceOf(scopes: string[]): string {
 }
 
 /** Access token for the given delegated scopes – or, in app mode, an app-only token for their resource. */
-export async function getToken(scopes: string[]): Promise<string> {
-  return kind === "app" ? appToken(resourceOf(scopes)) : getAccessToken(scopes);
+export async function getToken(scopes: string[], options?: { interactive?: boolean }): Promise<string> {
+  return kind === "app" ? appToken(resourceOf(scopes)) : getAccessToken(scopes, options);
 }
 
 /* --------------------------------------------------------------- app mode */

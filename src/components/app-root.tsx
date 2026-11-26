@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import { MsalProvider, useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
+import { toast } from "sonner";
 import { Spinner } from "@/components/ui/spinner";
 import { appSession, configureAuth, isAppAuth, isAuthConfigured } from "@/lib/auth";
+import { clearCachesAfterUpdate } from "@/lib/cache-version";
 import { configureMsal, getMsal, isMsalConfigured } from "@/lib/msal";
 import { appCredentials, authConfig, loadSettings, useSettings } from "@/lib/settings";
 import { useApp } from "@/lib/store";
@@ -62,13 +64,20 @@ export function AppRoot() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    loadSettings().then(() => {
+    // after an update no site may open from a scan the previous version cached
+    Promise.all([loadSettings(), clearCachesAfterUpdate()]).then(([, cleared]) => {
       const snapshot = useSettings.getState();
       configureMsal(authConfig(snapshot));
       configureAuth(appCredentials(snapshot));
       // app access needs no sign-in: reconnect right away if it was connected before
       if (isAppAuth() && isAuthConfigured() && appSession() && !useApp.getState().mode) useApp.getState().setMode("live");
       setReady(true);
+      if (cleared) {
+        toast.info(`Version ${process.env.APP_VERSION} installiert`, {
+          description: "Die zwischengespeicherten Scans wurden verworfen – jede Site wird beim Öffnen vollständig neu eingelesen.",
+          duration: 15_000,
+        });
+      }
     });
   }, []);
 

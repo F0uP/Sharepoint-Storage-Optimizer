@@ -27,8 +27,11 @@ export type DeltaOp = { folder: FolderEntry } | { file: SpFile } | { removed: st
 
 export interface LibraryRef {
   id: string;
+  /** subsite libraries are prefixed with the subsite, e.g. "Projekte/Dokumente" */
   name: string;
   webUrl: string;
+  /** URL of the (sub)site the library belongs to – SharePoint REST calls go there */
+  siteUrl?: string;
 }
 
 export interface DriveState extends LibraryRef {
